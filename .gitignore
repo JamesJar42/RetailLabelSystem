@@ -1,0 +1,7 @@
+build/
+.vscode/
+out/
+CMakePresets.json
+resources/
+cmake/
+RetailLabelSystem.code-workspace

@@ -14,7 +14,6 @@
 #include <QPrintPreviewWidget>
 #include <QVBoxLayout>
 #include <QDialogButtonBox>
-#include <windows.h>
 #include "product.h"
 #include "shop.h"
 
@@ -31,9 +30,15 @@ class labelSystem
 
 	void init(const std::string &path);
 
+	// Resolve a possibly-relative resource path to an absolute path based on the
+	// application's directory so resources are found even when launched from a
+	// shortcut whose working directory differs.
+	std::string resourcePath(const std::string &relPath) const;
+
 public:
 	shop dtb;
 
+	labelSystem();
 	void UpperCaseWords(std::string &string);
 	void printPreview(QPrinter& printer, const std::vector<QImage>& images);
 	void printImages(const std::vector<cv::Mat>& cvImages);
@@ -51,12 +56,25 @@ public:
 	void searchByName();
 	void editByBarcode();
 	void flagProducts();
+	// Flag/unflag multiple products by barcode. Returns number of matched products updated.
+	int flagProducts(const std::vector<std::string> &barcodes, bool setFlag = true);
 	void flagAll();
 	void unflagAll();
 	void changePrice();
 	void deletePages();
+	// Attempt to delete generated pages after a delay with retries. Returns true on success.
+	bool deletePagesWithRetry(int initialDelayMs = 2000, int maxAttempts = 10, int attemptIntervalMs = 500);
 	void print();
 	void viewLabels();
+
+	// Clear label flags for all products
+	void clearLabelFlags();
+
+	// Accessors for the label configuration
+	labelConfig getLabelConfig() const;
+	void setLabelConfig(const labelConfig &cfg);
+	// Save the current label configuration back to the config file
+	bool saveConfig(const std::string &path = "resources/Config.txt");
 	labelSystem(const std::string &config);
 	~labelSystem();
 };

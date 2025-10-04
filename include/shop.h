@@ -15,4 +15,10 @@ public:
 
     product& search(int choice);
 
+    void removeByBarcode(const std::string &barcode);
+
+    product& searchByBarcode(const std::string &barcode);
+
+    void clear();
+
 };

@@ -1,5 +1,16 @@
-#include "../include\/labelSystem.h"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include "../include/labelSystem.h"
 #include "Menu.h"
+#include "MainWindow.h"
+#include <QApplication>
+#include <QFile>
+#include <QString>
+#include <QSettings>
+#include <QFileInfo>
+#include <QDebug>
+#include <QDir>
 
 /*
 * 
@@ -7,8 +18,6 @@
 * It manages starts the application and displays a menu for user choice.
 * 
 */
-
-labelSystem ls("resources/Config.txt");
 
 BOOL WINAPI CtrlHandler(DWORD fdwCtrlType)
 {
@@ -31,95 +40,92 @@ int main(int argc, char* argv[])
 
 	QApplication app(argc, argv);
 
+	// Ensure compiled resources from icons.qrc are initialized (makes :/icons/* available)
+	Q_INIT_RESOURCE(icons);
+
+	// Setup organization/app for QSettings
+	QCoreApplication::setOrganizationName("RetailLabelCo");
+	QCoreApplication::setApplicationName("RetailLabeler");
+
 	SetConsoleOutputCP(CP_UTF8);
 
-	ls.process();
+	// Ensure the working directory is the directory containing the executable
+	// so relative resource paths like "resources/..." resolve correctly.
+	wchar_t exePath[MAX_PATH];
+	GetModuleFileNameW(NULL, exePath, MAX_PATH);
+	std::filesystem::path exeDir = std::filesystem::path(exePath).remove_filename();
+	std::filesystem::current_path(exeDir);
 
-	vector<string> items = {"Add Products", "Remove Product Via Barcode", "Edit Product Via Barcode", 
-	"Search by Barcode", "Search By Name", "Flag/Unflag Products", "Unflag All Products", "Change Price", "Print Pages", "Quit"};
+	// Initialize labelSystem
+	labelSystem ls("resources/Config.txt");
 
-	Menu Main("Label System", items);
-
-	do
-	{
-
-		ls.save();
-
-		cout << endl;
-
-		Main.display();
-
-		std::cout << "Please Enter Your Choice (Number): ";
-
-		switch (Main.getUserData())
-		{
-		case 1:
-			ls.addProduct();
-			break;
-		case 2:
-			if (!ls.dtb.listProduct().empty())
-			{
-				ls.removeProducts();
+	// Select stylesheet according to the saved theme preference.
+	// Possible values: "light", "dark", "file" (editable resources/style.qss).
+	QSettings settings;
+	QString theme = settings.value("theme", "light").toString();
+	// Allow temporary override from command-line for testing: --theme=dark|light|file
+	for (int i = 1; i < argc; ++i) {
+		QString arg = QString::fromLocal8Bit(argv[i]);
+		if (arg.startsWith("--theme=", Qt::CaseInsensitive)) {
+			QString val = arg.section('=', 1, 1).trimmed();
+			if (val == "dark" || val == "light" || val == "file") {
+				qDebug() << "Command-line theme override:" << val;
+				theme = val;
+				// record a transient override so MainWindow reloads honor it
+				app.setProperty("themeOverride", val);
 			}
-			else
-			{
-				std::cout << std::endl << "There Are No Products In The Database" << std::endl;
-			}
-			break;
-		case 3:
-			if (!ls.dtb.listProduct().empty())
-			{
-				ls.editByBarcode();
-			}
-			else
-			{
-				std::cout << std::endl << "There Are No Products In The Database" << std::endl;
-			}
-			break;
-		case 4:
-			if (!ls.dtb.listProduct().empty())
-			{
-				ls.searchByBarcode();
-			}
-			else
-			{
-				std::cout << std::endl << "There Are No Products In The Database" << std::endl;
-			}
-			break;
-		case 5:
-			if (!ls.dtb.listProduct().empty())
-			{
-				ls.searchByName();
-			}
-			else
-			{
-				std::cout << std::endl << "There Are No Products In The Database" << std::endl;
-			}
-			break;
-		case 6:
-			ls.flagProducts();
-			break;
-		case 7:
-			ls.unflagAll();
-			break;
-		case 8:
-			ls.changePrice();
-			break;
-		case 9:
-			ls.viewLabels();
-			break;
-		case 10:
-			exit(0);
-			break;
-		default:
-			std::cin.clear();
-			std::cin.ignore(100, '\n');
-			std::cout << std::endl;
-			std::cout << "Error" << std::endl << std::endl;
 		}
+	}
+	QString qssPath;
+	QString chosen;
+	// candidate list declared early
+	QStringList candidates;
+	bool qssPathSet = false;
+	if (theme == "file") {
+		// If the user selected a custom qss path earlier, try that absolute path first
+		QString custom = settings.value("custom_qss", "").toString();
+		if (!custom.isEmpty() && QFile::exists(custom)) {
+			qssPath = custom;
+			qssPathSet = true;
+		} else {
+			chosen = "style.qss";
+		}
+	}
+	else if (theme == "dark") chosen = "style_dark.qss";
+	else chosen = "style_light.qss";
 
+	// If a custom absolute path was set above, use it. Otherwise probe candidate locations.
+	if (!qssPathSet) {
+		candidates << (QStringLiteral("resources/") + chosen);
+		candidates << (QStringLiteral("../resources/") + chosen);
+		candidates << (QStringLiteral("../../resources/") + chosen);
+		QString found;
+		for (const QString &c : candidates) {
+			if (QFile::exists(c)) { found = c; break; }
+		}
+		if (!found.isEmpty()) qssPath = found;
+		else if (QFile::exists("resources/style.qss")) qssPath = "resources/style.qss";
+		else qssPath = candidates.first();
+	}
+	if (QFile::exists(qssPath)) {
+		QFile qssFile(qssPath);
+		if (qssFile.open(QFile::ReadOnly | QFile::Text)) {
+			QString style = QString::fromUtf8(qssFile.readAll());
+			app.setStyleSheet(style);
+			qssFile.close();
+			qDebug() << "Loaded stylesheet:" << qssPath;
+		}
+	} else {
+		qDebug() << "No stylesheet found at" << qssPath;
+	}
 
-	} while (true);
+	// Pass labelSystem to MainWindow
+	MainWindow mainWindow(&ls);
+	// Diagnostic: list embedded icon resources (helpful when qrc embedding fails)
+	{
+		// ...existing code...
+	}
+	mainWindow.show();
 
 	return app.exec();
 }

@@ -1,0 +1,96 @@
+/* Light theme - modern, flatter look */
+/* Base colors */
+QPalette { }
+QWidget, QMainWindow {
+	background: #f7f9fb;
+	color: #1f2933;
+	font-family: "Segoe UI";
+}
+
+/* Menu bar */
+QMenuBar {
+	background: transparent;
+	color: #1f2933;
+	spacing: 6px;
+	padding: 6px 8px;
+}
+QMenuBar::item {
+	background: transparent;
+	padding: 6px 10px;
+	margin: 0 4px;
+	border-radius: 6px;
+}
+QMenuBar::item:selected {
+	background: rgba(100,149,237,0.12);
+	color: #0f1720;
+}
+QMenu {
+	background: #ffffff;
+	color: #0f1720;
+	border: 1px solid rgba(15,23,32,0.06);
+	padding: 6px;
+	border-radius: 8px;
+}
+QMenu::item { padding: 6px 18px; }
+QMenu::item:selected { background: rgba(100,149,237,0.14); color: #0b1220; }
+
+/* Toolbars */
+QToolBar { background: transparent; border: none; padding: 4px; }
+/* Use an accent color for toolbar icons/buttons so they contrast with the light background */
+QToolBar QToolButton { color: #2563eb; }
+
+/* Buttons */
+QPushButton, QToolButton {
+	background: #ffffff;
+	color: #0f1720;
+	border: 1px solid rgba(15,23,32,0.06);
+	border-radius: 8px;
+	padding: 6px 10px;
+	min-height: 30px;
+}
+QPushButton:hover, QToolButton:hover { background: rgba(15,23,32,0.03); }
+QPushButton:pressed, QToolButton:pressed { background: rgba(15,23,32,0.06); }
+QPushButton:disabled { color: rgba(15,23,32,0.35); border-color: rgba(15,23,32,0.03); }
+
+/* Line edits and inputs */
+QLineEdit, QPlainTextEdit, QTextEdit {
+	background: #ffffff;
+	border: 1px solid rgba(15,23,32,0.06);
+	border-radius: 8px;
+	padding: 6px 8px;
+	color: #0f1720;
+}
+QLineEdit:focus, QTextEdit:focus { border-color: rgba(100,149,237,0.6); }
+
+/* Table styling */
+QTableWidget, QTableView {
+	background: #ffffff;
+	alternate-background-color: #f3f7fb;
+	gridline-color: rgba(15,23,32,0.04);
+	color: #0f1720;
+	selection-background-color: #4f7be6;
+	selection-color: #ffffff;
+	border-radius: 6px;
+}
+QHeaderView::section {
+	background: transparent;
+	color: #0f1720;
+	padding: 8px;
+	font-weight: 700;
+	border-bottom: 1px solid rgba(15,23,32,0.04);
+}
+QTableView::item { padding: 8px 12px; }
+QTableWidget::item { color: #0f1720; }
+
+/* Scrollbars */
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0 0 0 0; }
+QScrollBar::handle:vertical { background: rgba(15,23,32,0.2); border-radius: 5px; min-height: 20px; }
+QScrollBar::handle:vertical:hover { background: rgba(15,23,32,0.32); }
+
+/* Dialogs, status */
+QDialog { background: #f7f9fb; }
+QStatusBar { background: transparent; color: #475569; }
+
+/* Small helper */
+*:focus { outline: none; }
+/* live-reload test: appended by smoke test */

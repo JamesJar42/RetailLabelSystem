@@ -2,6 +2,7 @@ build/
 .vscode/
 out/
 CMakePresets.json
-resources/
+resources/labelTemplate.png
 cmake/
 RetailLabelSystem.code-workspace
+CMakeLists.txt.user

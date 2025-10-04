@@ -1,5 +1,7 @@
 #include "../include/labelSystem.h"
 #include "../include/Menu.h"
+#include <thread>
+#include <chrono>
 
 /*
 * 
@@ -12,6 +14,11 @@
 labelSystem::labelSystem(const std::string &config)
 {
 	init(config);
+}
+
+labelSystem::labelSystem()
+{
+    // Initialize any necessary members here
 }
 
 labelSystem::~labelSystem()
@@ -38,10 +45,27 @@ void labelSystem::init(const std::string& path)
 	config.close();
 }
 
+// Resolve a possibly-relative resource path to an absolute path based on the
+// application's directory so resources are found even when launched from a
+// shortcut whose working directory differs.
+std::string labelSystem::resourcePath(const std::string &relPath) const
+{
+	std::filesystem::path p(relPath);
+	if (p.is_absolute()) return relPath;
+
+	QString appDir = QCoreApplication::applicationDirPath();
+	if (!appDir.isEmpty()) {
+		std::filesystem::path abs = std::filesystem::path(appDir.toStdString()) / relPath;
+		return abs.make_preferred().string();
+	}
+
+	return (std::filesystem::current_path() / relPath).make_preferred().string();
+}
+
 std::vector<cv::Mat> labelSystem::loadImages(const std::vector<std::string>& filenames) {
 	std::vector<cv::Mat> images;
 	for (const auto& file : filenames) {
-		images.push_back(cv::imread(file));
+		images.push_back(cv::imread(resourcePath(file)));
 	}
 	return images;
 }
@@ -112,14 +136,26 @@ void labelSystem::printImages(const std::vector<cv::Mat>& cvImages) {
 		images.push_back(cvMatToQImage(cvImg));
 	}
 
-	QPrinter printer;
-	QPrintPreviewDialog preview(&printer);
+	QPrinter *printer = new QPrinter();
+	QPrintPreviewDialog *preview = new QPrintPreviewDialog(printer);
 
-	QObject::connect(&preview, &QPrintPreviewDialog::paintRequested, [&](QPrinter* printer) {
+	QObject::connect(preview, &QPrintPreviewDialog::paintRequested, [this, &images](QPrinter* printer) {
 		printPreview(*printer, images);
-		});
+	});
 
-	preview.exec();
+	// When the preview dialog finishes (closed), start background deletion of generated pages.
+	QObject::connect(preview, &QDialog::finished, [this, preview](int) {
+		// Start deletion asynchronously to avoid blocking the GUI thread. Use a short delay/retry inside deletePagesWithRetry.
+		std::thread([this]() {
+			// Use the same defaults used elsewhere; this will retry deletions if files are still in use.
+			this->deletePagesWithRetry(2000, 12, 500);
+		}).detach();
+
+		// Clean up the preview dialog object
+		preview->deleteLater();
+	});
+
+	preview->exec();
 }
 
 void labelSystem::process()
@@ -127,7 +163,7 @@ void labelSystem::process()
 
 	int dtbSize;
 
-	std::ifstream database("resources/Database.txt");
+	std::ifstream database(resourcePath("resources/Database.txt"));
 
 	std::cout << "Attempting to read Database..." << std::endl;
 	if (database.is_open()) {
@@ -205,7 +241,7 @@ void labelSystem::listProducts()
 void labelSystem::save()
 {
 	std::ofstream fout;
-	fout.open("resources/Database.txt");
+	fout.open(resourcePath("resources/Database.txt"));
 	fout << dtb.listProduct().size() << std::endl;
 	for (product& pd : dtb.listProduct())
 	{
@@ -567,6 +603,25 @@ void labelSystem::flagProducts()
 	clear();
 }
 
+// Batch flag/unflag products by barcode. Returns how many products were matched and updated.
+int labelSystem::flagProducts(const std::vector<std::string> &barcodes, bool setFlag)
+{
+	int matched = 0;
+	if (barcodes.empty()) return matched;
+
+	for (const std::string &bc : barcodes) {
+		for (product &pd : dtb.listProduct()) {
+			if (pd.getBarcode() == bc) {
+				pd.setLabelFlag(setFlag);
+				++matched;
+				break; // move to next barcode once matched
+			}
+		}
+	}
+
+	return matched;
+}
+
 void labelSystem::flagAll()
 {
 	for (product& pds : dtb.listProduct())
@@ -668,6 +723,55 @@ void labelSystem::deletePages()
 	}
 }
 
+bool labelSystem::deletePagesWithRetry(int initialDelayMs, int maxAttempts, int attemptIntervalMs)
+{
+	// Wait a short initial period to allow any print preview or print job to release file handles
+	std::this_thread::sleep_for(std::chrono::milliseconds(initialDelayMs));
+
+	auto tryDeleteFile = [&](const std::string &name) -> bool {
+		for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+			std::error_code ec;
+			bool removed = std::filesystem::remove(name, ec);
+			if (removed) return true;
+			// If file doesn't exist, treat as success
+			if (!std::filesystem::exists(name)) return true;
+			// Log attempt
+			try {
+				std::ofstream log("resources/DeletionLog.txt", std::ios::app);
+				if (log.is_open()) {
+					log << "Attempt " << attempt + 1 << " to delete " << name << " failed; will retry.\n";
+					log.close();
+				}
+			} catch (...) {}
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(attemptIntervalMs));
+		}
+		return false;
+	};
+
+	bool ok = true;
+	if (!tryDeleteFile("labels.jpg")) ok = false;
+
+	// Also attempt to remove any numbered pages that exist on disk (labels(1).jpg, labels(2).jpg, ...)
+	// This ensures temporary files created externally (tests, editors) are removed even if labelVector is empty.
+	for (int i = 1; ; ++i) {
+		std::string name = "labels(" + std::to_string(i) + ").jpg";
+		if (!std::filesystem::exists(name)) break;
+		if (!tryDeleteFile(name)) ok = false;
+	}
+
+	// Final log for success/failure
+	try {
+		std::ofstream log("resources/DeletionLog.txt", std::ios::app);
+		if (log.is_open()) {
+			log << "deletePagesWithRetry completed: " << (ok ? "SUCCESS" : "FAILED") << "\n";
+			log.close();
+		}
+	} catch (...) {}
+
+	return ok;
+}
+
 void labelSystem::print()
 {
 
@@ -689,7 +793,7 @@ void labelSystem::viewLabels()
 	bool labelsFound = false;
 
 
-	cv::Mat img = cv::imread("resources/labelTemplate.png", cv::IMREAD_COLOR);
+	cv::Mat img = cv::imread(resourcePath("resources/labelTemplate.png"), cv::IMREAD_COLOR);
 	cv::Mat labels(3508, 2480, CV_8UC3, cv::Scalar(255, 255, 255));
 	cv::namedWindow("Output", cv::WINDOW_NORMAL);
 
@@ -792,42 +896,84 @@ void labelSystem::viewLabels()
 
 	cv::destroyAllWindows();
 
-	bool error = false;
+	// After showing the print preview, ask the user whether to remove label flags
+	// and whether to delete generated pages. Use console prompts when running
+	// headless; otherwise the GUI caller (e.g. MainWindow) will invoke the
+	// appropriate UI actions after calling viewLabels().
+	if (QCoreApplication::instance()) {
+		// If running with a GUI, simply return control to the caller. The
+		// MainWindow will handle asking the user via dialog and call
+		// clearLabelFlags() and deletePages() as needed.
+		return;
+	} else {
+		bool error = false;
 
-	do {
-		error = false;
-		char choice, del;
-		std::cout << "Remove Label Flags (Y or N)" << std::endl;
-		std::cin >> choice;
-		if (tolower(choice) == 'y') {
-			for (product& pd : dtb.listProduct()) {
-				if (pd.getLabelFlag()) {
-					pd.setLabelFlag(false);
+		do {
+			error = false;
+			char choice, del;
+			std::cout << "Remove Label Flags (Y or N)" << std::endl;
+			std::cin >> choice;
+			if (tolower(choice) == 'y') {
+				for (product& pd : dtb.listProduct()) {
+					if (pd.getLabelFlag()) {
+						pd.setLabelFlag(false);
+					}
 				}
 			}
-		}
-		else if (tolower(choice) == 'n') {
+			else if (tolower(choice) == 'n') {
 
-		}
-		else {
-			std::cout << "Error Please Try Again" << std::endl;
-			error = true;
-			std::cin.ignore(100, '\n');
-		}
+			}
+			else {
+				std::cout << "Error Please Try Again" << std::endl;
+				error = true;
+				std::cin.ignore(100, '\n');
+			}
 
-		std::cout << "Delete Pages? (Y or N)" << std::endl;
-		std::cin >> del;
-		if (tolower(del) == 'y') {
-			deletePages();
-		}
-		else if (tolower(del) == 'n') {
+			std::cout << "Delete Pages? (Y or N)" << std::endl;
+			std::cin >> del;
+			if (tolower(del) == 'y') {
+				deletePages();
+			}
+			else if (tolower(del) == 'n') {
 
-		}
-		else {
-			std::cout << "Error Please Try Again" << std::endl;
-			error = true;
-			std::cin.ignore(100, '\n');
-		}
-	} while (error);
+			}
+			else {
+				std::cout << "Error Please Try Again" << std::endl;
+				error = true;
+				std::cin.ignore(100, '\n');
+			}
+		} while (error);
+	}
 
+}
+
+void labelSystem::clearLabelFlags()
+{
+	for (product& pd : dtb.listProduct()) {
+		if (pd.getLabelFlag()) pd.setLabelFlag(false);
+	}
+}
+
+labelConfig labelSystem::getLabelConfig() const {
+	return labelconfig;
+}
+
+void labelSystem::setLabelConfig(const labelConfig &cfg) {
+	labelconfig = cfg;
+}
+
+bool labelSystem::saveConfig(const std::string &path)
+{
+	try {
+		std::ofstream fout(resourcePath(path));
+		if (!fout.is_open()) return false;
+		// Write the config in the format expected by the reader (leading 'labels')
+		fout << "labels " << labelconfig.TL << " " << labelconfig.TS << " " << labelconfig.PS << " "
+			 << labelconfig.TX << " " << labelconfig.TY << " " << labelconfig.PX << " " << labelconfig.PY << " "
+			 << labelconfig.STX << " " << labelconfig.STY << " " << labelconfig.XO << std::endl;
+		fout.close();
+		return true;
+	} catch (...) {
+		return false;
+	}
 }

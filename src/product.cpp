@@ -1,7 +1,7 @@
 //
 // Created by Joshua Lyttle on 13/03/2024.
 //
-#include "../include\/product.h"
+#include "../include/product.h"
 #include <string>
 
 product::product(std::string description, float price, std::string size, std::string barcode, bool labelFlag)
@@ -16,45 +16,45 @@ std::string product::getDescription()
     return description;
 }
 
-float& product::getPrice()
-{
+float product::getPrice() const {
     return price;
 }
 
-std::string& product::getBarcode() {
+std::string product::getBarcode() const {
     return barcode;
 }
 
-bool& product::getLabelFlag()
+bool product::getLabelFlag() const
 {
     return labelFlag;
 }
 
-std::string& product::getSize()
+std::string product::getSize() const
 {
     return size;
 }
 
-void product::setDescription(std::string &dcr)
+void product::setDescription(const std::string &dcr)
 {
     description = dcr;
 }
 
-void product::setPrice(float &prc)
+void product::setPrice(float prc)
 {
     price = prc;
 }
 
-void product::setBarcode(std::string &bcd)
+void product::setBarcode(const std::string &bcd)
 {
     barcode = bcd;
 }
 
-void product::setLabelFlag(bool lblF) {
+void product::setLabelFlag(bool lblF)
+{
     labelFlag = lblF;
 }
 
-void product::setSize(std::string &sz)
+void product::setSize(const std::string &sz)
 {
     size = sz;
 }
@@ -77,6 +77,11 @@ bool product::operator==(const product &p) const {
     {
         return false;
     }
+}
+
+std::string product::getName() const
+{
+    return description;
 }
 
 

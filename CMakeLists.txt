@@ -4,7 +4,7 @@ set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin")
 set(CPACK_NSIS_SHORTCUT_NAME "RetailLabeler")
 set(CPACK_NSIS_SHORTCUT_TARGET "RetailLabeler.exe")
 set(CPACK_NSIS_MENU_LINKS "bin/RetailLabeler.exe" "RetailLabeler")
-set(CPACK_NSIS_CREATE_ICONS_EXTRA "CreateShortCut \"$DESKTOP\\RetailLabeler.lnk\" \"$INSTDIR\\bin\\RetailLabeler.exe\"")
+set(CPACK_NSIS_CREATE_ICONS_EXTRA "CreateShortCut \"$DESKTOP/RetailLabeler.lnk\" \"$INSTDIR/bin/RetailLabeler.exe\" \"\" \"$INSTDIR/bin/RetailLabeler.exe\" 0 SW_SHOWNORMAL \"\" \"$INSTDIR/bin\"")
 # Ensure the linker can find OpenCV .lib files
 link_directories("D:/opencv/build/install/x64/vc17/lib")
 # Install resources directory for install/package
@@ -77,12 +77,55 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build)
 # Collect all source and header files
 file(GLOB_RECURSE SOURCES src/*.cpp)
 file(GLOB_RECURSE HEADERS include/*.h)
+# Include Designer forms so AUTOUIC processes them
+file(GLOB_RECURSE UI_FILES forms/*.ui)
 
 
 qt_add_executable(RetailLabeler
     ${SOURCES}
     ${HEADERS}
+    ${UI_FILES}
 )
+
+# Core library for non-GUI logic so tests can link implementation
+add_library(retail_core STATIC
+    src/labelSystem.cpp
+    src/shop.cpp
+    src/product.cpp
+    src/Menu.cpp
+)
+
+target_include_directories(retail_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(retail_core PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::PrintSupport ${OpenCV_LIBS})
+
+# Enable CTest and add unit tests
+enable_testing()
+
+# Test executable
+add_executable(labelSystem_tests
+    tests/test_labelSystem.cpp
+    src/labelSystem.cpp
+    src/shop.cpp
+    src/product.cpp
+    src/Menu.cpp
+)
+
+target_link_libraries(labelSystem_tests PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::PrintSupport
+    ${OpenCV_LIBS}
+)
+
+target_include_directories(labelSystem_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(labelSystem_tests PRIVATE retail_core)
+
+add_test(NAME labelSystem_tests COMMAND labelSystem_tests)
 
 # Copy resources to build output directories for local debug/run, excluding Database.txt
 file(GLOB RESOURCE_FILES "${CMAKE_SOURCE_DIR}/resources/*")
@@ -154,7 +197,7 @@ set(CPACK_PACKAGE_VENDOR "YourCompany")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RetailLabeler - Retail Label System")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_CONTACT "youremail@example.com")
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.txt")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_EXECUTABLES "RetailLabeler" "RetailLabeler")
 
 # Install target

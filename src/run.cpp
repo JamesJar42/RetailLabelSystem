@@ -40,8 +40,8 @@ int main(int argc, char* argv[])
 
 	QApplication app(argc, argv);
 
-	// Ensure compiled resources from icons.qrc are initialized (makes :/icons/* available)
-	Q_INIT_RESOURCE(icons);
+	// No embedded icons.qrc in this build configuration; the app uses system/theme icons.
+	// If you later add a resources/icons.qrc file, restore Q_INIT_RESOURCE(icons);
 
 	// Setup organization/app for QSettings
 	QCoreApplication::setOrganizationName("RetailLabelCo");

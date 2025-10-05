@@ -3,6 +3,9 @@ build/
 out/
 CMakePresets.json
 resources/labelTemplate.png
+resources/logo.ico
+resources/RetailLabeler.rc
+resources/RetailLabeler.rc.in
 cmake/
 RetailLabelSystem.code-workspace
 CMakeLists.txt.user

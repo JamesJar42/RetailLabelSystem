@@ -50,9 +50,9 @@ PrintDialog::PrintDialog(
 		resize(1200, 800);
 	}
 	setSizeGripEnabled(true);
+	loadDialogSettings();
 
 	QTimer::singleShot(0, this, [this]() {
-		syncOptionControlsFromPrinter();
 		updatePrinterInfo();
 		updateJobSummary();
 		refreshPreview();
@@ -214,6 +214,7 @@ void PrintDialog::setupUi() {
 		QPageSetupDialog dialog(m_printer, this);
 		if (dialog.exec() == QDialog::Accepted) {
 			syncOptionControlsFromPrinter();
+			saveDialogSettings();
 			refreshPreview();
 		}
 	});
@@ -226,9 +227,18 @@ void PrintDialog::setupUi() {
 	});
 	sidebarLayout->addWidget(advancedCard);
 
-	connect(m_copiesSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this]() { refreshPreview(); });
-	connect(m_actualSizeCheck, &QCheckBox::toggled, this, [this]() { refreshPreview(); });
-	connect(m_centerOnPageCheck, &QCheckBox::toggled, this, [this]() { refreshPreview(); });
+	connect(m_copiesSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this]() {
+		saveDialogSettings();
+		refreshPreview();
+	});
+	connect(m_actualSizeCheck, &QCheckBox::toggled, this, [this]() {
+		saveDialogSettings();
+		refreshPreview();
+	});
+	connect(m_centerOnPageCheck, &QCheckBox::toggled, this, [this]() {
+		saveDialogSettings();
+		refreshPreview();
+	});
 	connect(m_orientationCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &PrintDialog::onPrintOptionChanged);
 	connect(m_colorModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &PrintDialog::onPrintOptionChanged);
 	connect(m_qualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &PrintDialog::onPrintOptionChanged);
@@ -447,12 +457,14 @@ void PrintDialog::onPrinterChanged(int index) {
 	}
 	syncOptionControlsFromPrinter();
 	applyPrinterOptions();
+	saveDialogSettings();
 	updatePrinterInfo();
 	refreshPreview();
 }
 
 void PrintDialog::onPrintOptionChanged() {
 	applyPrinterOptions();
+	saveDialogSettings();
 	refreshPreview();
 }
 
@@ -473,6 +485,7 @@ PrintLayoutConfig PrintDialog::readLayoutFromControls() const {
 
 void PrintDialog::onLayoutConfigChanged() {
 	m_layoutConfig = readLayoutFromControls();
+	saveDialogSettings();
 	if (m_imageGenerator) {
 		std::vector<QImage> regenerated = m_imageGenerator(m_layoutConfig);
 		if (!regenerated.empty()) {
@@ -556,6 +569,7 @@ void PrintDialog::onProperties() {
 	QPrintDialog dialog(m_printer, this);
 	if (dialog.exec() == QDialog::Accepted) {
 		syncOptionControlsFromPrinter();
+		saveDialogSettings();
 		updatePrinterInfo();
 		refreshPreview();
 	}
@@ -623,17 +637,7 @@ void PrintDialog::onPrint() {
 			}
 		}
 
-		QSettings settings;
-		settings.setValue("printLayout/TL", m_layoutConfig.TL);
-		settings.setValue("printLayout/TS", m_layoutConfig.TS);
-		settings.setValue("printLayout/PS", m_layoutConfig.PS);
-		settings.setValue("printLayout/TX", m_layoutConfig.TX);
-		settings.setValue("printLayout/TY", m_layoutConfig.TY);
-		settings.setValue("printLayout/PX", m_layoutConfig.PX);
-		settings.setValue("printLayout/PY", m_layoutConfig.PY);
-		settings.setValue("printLayout/STX", m_layoutConfig.STX);
-		settings.setValue("printLayout/STY", m_layoutConfig.STY);
-		settings.setValue("printLayout/XO", m_layoutConfig.XO);
+		saveDialogSettings();
 
 		syncOptionControlsFromPrinter();
 		applyPrinterOptions();
@@ -643,6 +647,7 @@ void PrintDialog::onPrint() {
 }
 
 void PrintDialog::onZoomChanged(int index) {
+	saveDialogSettings();
 	switch(index) {
 		case 0:
 			m_preview->setZoomMode(QPrintPreviewWidget::FitToWidth);
@@ -677,6 +682,7 @@ void PrintDialog::onZoomChanged(int index) {
 
 void PrintDialog::onZoomSliderChanged(int value) {
 	if (!m_preview) return;
+	saveDialogSettings();
 	m_preview->setZoomFactor(static_cast<qreal>(value) / 100.0);
 	if (m_zoomValueLabel) {
 		m_zoomValueLabel->setText(QString("%1%").arg(value));
@@ -691,6 +697,7 @@ void PrintDialog::onZoomSliderChanged(int value) {
 }
 
 void PrintDialog::onViewModeChanged(int index) {
+	saveDialogSettings();
 	switch (index) {
 		case 1:
 			m_preview->setViewMode(QPrintPreviewWidget::FacingPagesView);
@@ -741,5 +748,87 @@ void PrintDialog::updateJobSummary() {
 			.arg(scaleMode)
 			.arg(centerMode)
 	);
+}
+
+void PrintDialog::loadDialogSettings() {
+	QSettings settings;
+
+	QSignalBlocker blockCopies(m_copiesSpin);
+	QSignalBlocker blockActual(m_actualSizeCheck);
+	QSignalBlocker blockCenter(m_centerOnPageCheck);
+	QSignalBlocker blockOrientation(m_orientationCombo);
+	QSignalBlocker blockColor(m_colorModeCombo);
+	QSignalBlocker blockQuality(m_qualityCombo);
+	QSignalBlocker blockTl(m_tlSpin);
+	QSignalBlocker blockTs(m_tsSpin);
+	QSignalBlocker blockPs(m_psSpin);
+	QSignalBlocker blockTx(m_txSpin);
+	QSignalBlocker blockTy(m_tySpin);
+	QSignalBlocker blockPx(m_pxSpin);
+	QSignalBlocker blockPy(m_pySpin);
+	QSignalBlocker blockStx(m_stxSpin);
+	QSignalBlocker blockSty(m_stySpin);
+	QSignalBlocker blockXo(m_xoSpin);
+	QSignalBlocker blockView(m_viewModeCombo);
+	QSignalBlocker blockZoomCombo(m_zoomCombo);
+	QSignalBlocker blockZoomSlider(m_zoomSlider);
+
+	m_copiesSpin->setValue(settings.value("printDialog/copies", m_copiesSpin->value()).toInt());
+	m_actualSizeCheck->setChecked(settings.value("printDialog/actualSize", m_actualSizeCheck->isChecked()).toBool());
+	m_centerOnPageCheck->setChecked(settings.value("printDialog/centerOnPage", m_centerOnPageCheck->isChecked()).toBool());
+	m_orientationCombo->setCurrentIndex(settings.value("printDialog/orientation", m_orientationCombo->currentIndex()).toInt());
+	m_colorModeCombo->setCurrentIndex(settings.value("printDialog/colorMode", m_colorModeCombo->currentIndex()).toInt());
+	m_qualityCombo->setCurrentIndex(settings.value("printDialog/quality", m_qualityCombo->currentIndex()).toInt());
+	m_viewModeCombo->setCurrentIndex(settings.value("printDialog/viewMode", m_viewModeCombo->currentIndex()).toInt());
+	m_zoomCombo->setCurrentIndex(settings.value("printDialog/zoomCombo", m_zoomCombo->currentIndex()).toInt());
+	m_zoomSlider->setValue(settings.value("printDialog/zoomSlider", m_zoomSlider->value()).toInt());
+
+	m_layoutConfig.TL = settings.value("printLayout/TL", m_layoutConfig.TL).toInt();
+	m_layoutConfig.TS = settings.value("printLayout/TS", m_layoutConfig.TS).toInt();
+	m_layoutConfig.PS = settings.value("printLayout/PS", m_layoutConfig.PS).toInt();
+	m_layoutConfig.TX = settings.value("printLayout/TX", m_layoutConfig.TX).toInt();
+	m_layoutConfig.TY = settings.value("printLayout/TY", m_layoutConfig.TY).toInt();
+	m_layoutConfig.PX = settings.value("printLayout/PX", m_layoutConfig.PX).toInt();
+	m_layoutConfig.PY = settings.value("printLayout/PY", m_layoutConfig.PY).toInt();
+	m_layoutConfig.STX = settings.value("printLayout/STX", m_layoutConfig.STX).toInt();
+	m_layoutConfig.STY = settings.value("printLayout/STY", m_layoutConfig.STY).toInt();
+	m_layoutConfig.XO = settings.value("printLayout/XO", m_layoutConfig.XO).toInt();
+
+	m_tlSpin->setValue(m_layoutConfig.TL);
+	m_tsSpin->setValue(m_layoutConfig.TS);
+	m_psSpin->setValue(m_layoutConfig.PS);
+	m_txSpin->setValue(m_layoutConfig.TX);
+	m_tySpin->setValue(m_layoutConfig.TY);
+	m_pxSpin->setValue(m_layoutConfig.PX);
+	m_pySpin->setValue(m_layoutConfig.PY);
+	m_stxSpin->setValue(m_layoutConfig.STX);
+	m_stySpin->setValue(m_layoutConfig.STY);
+	m_xoSpin->setValue(m_layoutConfig.XO);
+}
+
+void PrintDialog::saveDialogSettings() {
+	QSettings settings;
+
+	settings.setValue("printDialog/copies", m_copiesSpin->value());
+	settings.setValue("printDialog/actualSize", m_actualSizeCheck->isChecked());
+	settings.setValue("printDialog/centerOnPage", m_centerOnPageCheck->isChecked());
+	settings.setValue("printDialog/orientation", m_orientationCombo->currentIndex());
+	settings.setValue("printDialog/colorMode", m_colorModeCombo->currentIndex());
+	settings.setValue("printDialog/quality", m_qualityCombo->currentIndex());
+	settings.setValue("printDialog/viewMode", m_viewModeCombo->currentIndex());
+	settings.setValue("printDialog/zoomCombo", m_zoomCombo->currentIndex());
+	settings.setValue("printDialog/zoomSlider", m_zoomSlider->value());
+
+	const PrintLayoutConfig cfg = readLayoutFromControls();
+	settings.setValue("printLayout/TL", cfg.TL);
+	settings.setValue("printLayout/TS", cfg.TS);
+	settings.setValue("printLayout/PS", cfg.PS);
+	settings.setValue("printLayout/TX", cfg.TX);
+	settings.setValue("printLayout/TY", cfg.TY);
+	settings.setValue("printLayout/PX", cfg.PX);
+	settings.setValue("printLayout/PY", cfg.PY);
+	settings.setValue("printLayout/STX", cfg.STX);
+	settings.setValue("printLayout/STY", cfg.STY);
+	settings.setValue("printLayout/XO", cfg.XO);
 }
 

@@ -106,6 +106,8 @@ private:
     void updateJobSummary();
     void updatePrinterInfo();
     void refreshPreview();
+    void loadDialogSettings();
+    void saveDialogSettings();
 };
 
 #endif

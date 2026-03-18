@@ -1,0 +1,3 @@
+Barcode,Name,Price,Size,OriginalPrice,LabelFlag
+123456789012,Sample Product,9.99,100g,12.99,0
+999999999999,Sale Product,5.00,Each,8.00,1

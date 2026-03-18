@@ -38,6 +38,11 @@ int main(int argc, char* argv[])
 {
 	SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
 
+#ifdef NDEBUG
+	// Release stability: avoid GPU-driver crashes (LiveKernelEvent 141) by forcing software OpenGL.
+	QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
+#endif
+
 	QApplication app(argc, argv);
 
 	// No embedded icons.qrc in this build configuration; the app uses system/theme icons.

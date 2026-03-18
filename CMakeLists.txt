@@ -1,60 +1,38 @@
-# NSIS desktop shortcut configuration for CPack
-## Ensure CPack NSIS variables are explicitly set in the CACHE so they override
-## any previously cached values from earlier configure runs.
-## Configure desktop/start-menu shortcuts for NSIS packaging
-# Use well-formed, cached CPACK_NSIS variables so CPack writes valid CreateShortCut calls.
-set(CPACK_NSIS_CREATE_DESKTOP_LINKS ON CACHE BOOL "Create desktop shortcuts (NSIS)")
-# Executables are installed to the 'bin' directory by our install commands
-set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin" CACHE STRING "Executables directory within package (relative to install dir)")
-# Menu links: semicolon-separated entries of the form "relative/path/to/exe;Display Name"
-set(CPACK_NSIS_MENU_LINKS "${CPACK_NSIS_EXECUTABLES_DIRECTORY}/RetailLabeler.exe;RetailLabeler" CACHE STRING "Start Menu link entries")
-# Shortcut target should reference the executable path inside the package (use forward slashes)
-set(CPACK_NSIS_SHORTCUT_NAME "RetailLabeler" CACHE STRING "Shortcut name")
-set(CPACK_NSIS_SHORTCUT_TARGET "${CPACK_NSIS_EXECUTABLES_DIRECTORY}/RetailLabeler.exe" CACHE STRING "Shortcut target executable relative to install dir")
-# No extra custom CreateShortCut entries by default
-set(CPACK_NSIS_CREATE_ICONS_EXTRA "" CACHE STRING "Extra CreateShortCut entries (empty)")
-
+# QtIFW desktop shortcut configuration
 # Optional build-time custom shortcut icon (path to a .ico file). This is intended
 # for builders to supply a per-build icon via -DCPACK_SHORTCUT_ICON=path/to/icon.ico
 set(CPACK_SHORTCUT_ICON "" CACHE PATH "Optional .ico used for Start Menu / Desktop shortcuts (build-time)")
 
-# If the builder supplied an icon, install it into the package bin/ directory and
-# instruct CPack/NSIS to create shortcuts that use the icon.
+# Do not hard-code absolute paths. Allow users to provide paths via CMake cache variables.
+# Recommend users pass -DQt6_ROOT=... and -DOpenCV_DIR=... when configuring if needed.
+set(Qt6_ROOT "" CACHE PATH "Path to Qt6 installation root (optional). If empty CMake will try to find Qt automatically.")
+set(OpenCV_DIR "" CACHE PATH "Path to OpenCV install directory (optional). If empty CMake will try to find OpenCV automatically.")
+
+
+cmake_minimum_required(VERSION 3.16)
+
+project(RetailLabeler VERSION 1.0.0 LANGUAGES CXX)
+
+if(NOT CPACK_SHORTCUT_ICON)
+    set(CPACK_SHORTCUT_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
+endif()
+
+# If the builder supplied an icon, install it into the package bin/ directory
 if(CPACK_SHORTCUT_ICON)
     if(EXISTS "${CPACK_SHORTCUT_ICON}")
         message(STATUS "Using custom shortcut icon: ${CPACK_SHORTCUT_ICON}")
         # Install the icon into the package bin folder and normalize the filename
         get_filename_component(_shortcut_icon_name "${CPACK_SHORTCUT_ICON}" NAME)
         # Install with a predictable name to avoid path issues
-        install(FILES "${CPACK_SHORTCUT_ICON}" DESTINATION bin RENAME "RetailLabeler.ico")
-    # Tell NSIS to create Start Menu and Desktop shortcuts using the installed icon
-    # Build the NSIS commands with escaped $ (use $$ in CMake to keep literal $ in generated file)
-    # Use forward slashes to avoid backslash escape issues when CMake writes the
-    # value into the cache file (which would otherwise create sequences like \R).
-    set(_nsis_line1 "CreateShortCut \"$$SMPROGRAMS/$$STARTMENU_FOLDER/RetailLabeler.lnk\" \"$$INSTDIR/bin/RetailLabeler.exe\" \"\" \"$$INSTDIR/bin/RetailLabeler.ico\" 0 SW_SHOWNORMAL \"\" \"$$INSTDIR/bin\"")
-    set(_nsis_line2 "CreateShortCut \"$$DESKTOP/RetailLabeler.lnk\" \"$$INSTDIR/bin/RetailLabeler.exe\" \"\" \"$$INSTDIR/bin/RetailLabeler.ico\" 0 SW_SHOWNORMAL \"\" \"$$INSTDIR/bin\"")
-    # Combine lines but escape the newline as a literal "\n" so CMake's cache
-    # (which truncates on actual newlines) stores the full string reliably.
-    string(CONCAT _nsis_full_escaped "${_nsis_line1}" "\\n" "${_nsis_line2}")
-    # Overwrite any existing cached value so the icon-backed CreateShortCut entries
-    # are actually written into the generated CPack/NSIS script. Use FORCE so
-    # repeated config runs reliably update the cache.
-    set(CPACK_NSIS_CREATE_ICONS_EXTRA "${_nsis_full_escaped}" CACHE STRING "Extra CreateShortCut entries (with icon)" FORCE)
+        install(FILES "${CPACK_SHORTCUT_ICON}" DESTINATION bin RENAME "RetailLabeler.ico" COMPONENT application)
     else()
         message(WARNING "CPACK_SHORTCUT_ICON set but file not found: ${CPACK_SHORTCUT_ICON}")
     endif()
 endif()
-# Do not hard-code absolute paths. Allow users to provide paths via CMake cache variables.
-# Recommend users pass -DQt6_ROOT=... and -DOpenCV_DIR=... when configuring if needed.
-set(Qt6_ROOT "" CACHE PATH "Path to Qt6 installation root (optional). If empty CMake will try to find Qt automatically.")
-set(OpenCV_DIR "" CACHE PATH "Path to OpenCV install directory (optional). If empty CMake will try to find OpenCV automatically.")
+
 # Install resources directory for install/package
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources" DESTINATION bin)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources" DESTINATION bin COMPONENT application)
 
-
-cmake_minimum_required(VERSION 3.16)
-
-project(RetailLabeler VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -74,7 +52,7 @@ endif()
 set(OpenCV_BIN_DIR_RELEASE "${OpenCV_DIR}/x64/vc17/bin")
 set(OpenCV_BIN_DIR_DEBUG "${OpenCV_DIR}/x64/vc17/bin")
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets PrintSupport Test)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets PrintSupport Network Test)
 
 
 # Find OpenCV for both Debug and Release
@@ -160,42 +138,106 @@ add_library(retail_core STATIC
     src/shop.cpp
     src/product.cpp
     src/Menu.cpp
+    src/PrintDialog.cpp
+    src/ProductDelegate.cpp
+    include/PrintDialog.h
+    include/ProductDelegate.h
 )
 
 target_include_directories(retail_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(retail_core PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::PrintSupport ${OpenCV_LIBS})
+target_link_libraries(retail_core PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::PrintSupport Qt6::Network ${OpenCV_LIBS})
 
 # Enable CTest and add unit tests
 enable_testing()
 
-# Test executable
-add_executable(labelSystem_tests
-    tests/test_labelSystem.cpp
-    src/labelSystem.cpp
-    src/shop.cpp
-    src/product.cpp
-    src/Menu.cpp
-)
+# Non-GUI unit tests split by feature area
+function(add_core_logic_test TARGET_NAME TEST_MAIN TEST_IMPL)
+    add_executable(${TARGET_NAME}
+        ${TEST_MAIN}
+        ${TEST_IMPL}
+        src/labelSystem.cpp
+        src/shop.cpp
+        src/product.cpp
+        src/Menu.cpp
+        src/PrintDialog.cpp
+        src/ProductDelegate.cpp
+        include/PrintDialog.h
+        include/ProductDelegate.h
+    )
 
-target_link_libraries(labelSystem_tests PRIVATE
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Widgets
-    Qt6::PrintSupport
-    ${OpenCV_LIBS}
-)
+    target_link_libraries(${TARGET_NAME} PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::PrintSupport
+        Qt6::Network
+        ${OpenCV_LIBS}
+    )
 
-target_include_directories(labelSystem_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${OpenCV_INCLUDE_DIRS}
-)
+    target_include_directories(${TARGET_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${OpenCV_INCLUDE_DIRS}
+    )
 
-target_link_libraries(labelSystem_tests PRIVATE retail_core)
+    target_link_libraries(${TARGET_NAME} PRIVATE retail_core)
+    add_test(NAME ${TARGET_NAME} COMMAND ${TARGET_NAME})
+endfunction()
 
-add_test(NAME labelSystem_tests COMMAND labelSystem_tests)
+add_core_logic_test(product_tests tests/test_product_main.cpp tests/test_product.cpp)
+add_core_logic_test(shop_tests tests/test_shop_main.cpp tests/test_shop.cpp)
+add_core_logic_test(labelsystem_queue_tests tests/test_labelSystem_queue_main.cpp tests/test_labelSystem_queue.cpp)
+add_core_logic_test(labelsystem_files_tests tests/test_labelSystem_files_main.cpp tests/test_labelSystem_files.cpp)
+
+# Qt GUI tests for MainWindow interaction behavior (split by feature area)
+function(add_mainwindow_gui_test TARGET_NAME TEST_SOURCE)
+    add_executable(${TARGET_NAME}
+        ${TEST_SOURCE}
+        src/MainWindow.cpp
+        src/ConfigEditorDialog.cpp
+        src/DatabaseSettingsDialog.cpp
+        src/VisualSettingsDialog.cpp
+        src/PrintDialog.cpp
+        src/ProductDelegate.cpp
+        src/labelSystem.cpp
+        src/shop.cpp
+        src/product.cpp
+        src/Menu.cpp
+        include/MainWindow.h
+        include/ConfigEditorDialog.h
+        include/DatabaseSettingsDialog.h
+        include/VisualSettingsDialog.h
+        include/PrintDialog.h
+        include/ProductDelegate.h
+    )
+
+    target_link_libraries(${TARGET_NAME} PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::PrintSupport
+        Qt6::Network
+        Qt6::Test
+        ${OpenCV_LIBS}
+    )
+
+    target_include_directories(${TARGET_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${OpenCV_INCLUDE_DIRS}
+    )
+
+    if(MSVC)
+        target_compile_options(${TARGET_NAME} PRIVATE /FS)
+    endif()
+
+    add_test(NAME ${TARGET_NAME} COMMAND ${TARGET_NAME})
+endfunction()
+
+add_mainwindow_gui_test(mainwindow_gui_filters_tests tests/test_mainwindow_gui_filters.cpp)
+add_mainwindow_gui_test(mainwindow_gui_shortcuts_tests tests/test_mainwindow_gui_shortcuts.cpp)
+add_mainwindow_gui_test(mainwindow_gui_actions_tests tests/test_mainwindow_gui_actions.cpp)
 
 # Copy resources to build output directories for local debug/run, excluding Database.txt
-file(GLOB RESOURCE_FILES "${CMAKE_SOURCE_DIR}/resources/*")
+file(GLOB RESOURCE_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/resources/*")
 foreach(res_file ${RESOURCE_FILES})
     get_filename_component(fname "${res_file}" NAME)
     if(NOT fname STREQUAL "Database.txt")
@@ -219,8 +261,15 @@ target_link_libraries(RetailLabeler PRIVATE
     Qt6::Gui
     Qt6::Widgets
     Qt6::PrintSupport
+    Qt6::Network
     Qt6::Test
     ${OpenCV_LIBS}
+)
+
+# Install target
+install(TARGETS RetailLabeler
+    RUNTIME DESTINATION bin
+    COMPONENT application
 )
 
     # -------------------
@@ -229,36 +278,42 @@ target_link_libraries(RetailLabeler PRIVATE
     if(WIN32)
         # Path to windeployqt
         set(WINDEPLOYQT_EXE "${Qt6_ROOT}/bin/windeployqt.exe")
+        
+        # 1. Run windeployqt POST_BUILD for local debugging convenience
         add_custom_command(TARGET RetailLabeler POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXE}" "$<TARGET_FILE:RetailLabeler>" --dir "$<TARGET_FILE_DIR:RetailLabeler>" $<$<CONFIG:Debug>:--debug> $<$<CONFIG:Release>:--release>
+            COMMAND "${WINDEPLOYQT_EXE}" "$<TARGET_FILE:RetailLabeler>" --dir "$<TARGET_FILE_DIR:RetailLabeler>" $<$<CONFIG:Debug>:--debug> $<$<CONFIG:Release>:--release> --no-translations
             COMMENT "Running windeployqt to collect Qt dependencies for correct config"
         )
-        # Install all DLLs from build output to install/bin
-        file(GLOB BUILD_DLLS
-            "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/*.dll"
-        )
-        install(FILES ${BUILD_DLLS} DESTINATION bin)
 
-        # Install all Qt plugin directories created by windeployqt
-        foreach(plugin_dir platforms imageformats iconengines generic networkinformation platforminputcontexts styles tls)
-            if(EXISTS "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${plugin_dir}")
-                install(DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${plugin_dir}" DESTINATION bin)
-            endif()
-        endforeach()
-        # Install all OpenCV DLLs found in the bin directory
+        # 2. Run windeployqt during INSTALL for packaging
+        # This ensures the package receives a self-contained bin folder
+        install(CODE "
+            message(STATUS \"Deploying Qt dependencies to install prefix...\")
+            execute_process(
+                COMMAND \"${WINDEPLOYQT_EXE}\" \"\${CMAKE_INSTALL_PREFIX}/bin/RetailLabeler.exe\" --no-translations --compiler-runtime
+            )
+        " COMPONENT application)
+        
+        # 3. Install OpenCV DLLs
+        # These exist at configure time, so file(GLOB) is safe here
         file(GLOB OPENCV_DLLS
             "${OpenCV_BIN_DIR_RELEASE}/opencv_*.dll"
         )
-        install(FILES ${OPENCV_DLLS} DESTINATION bin)
+        install(FILES ${OPENCV_DLLS} DESTINATION bin COMPONENT application)
 
         # Always try to install Qt6Test.dll (CMake will skip if not found)
-        install(FILES "${Qt6_ROOT}/bin/Qt6Test.dll" DESTINATION bin)
+        install(FILES "${Qt6_ROOT}/bin/Qt6Test.dll" DESTINATION bin COMPONENT application)
     endif()
     
 # -------------------
 # CPack configuration
 # -------------------
+# Explicitly install system runtimes (MSVCP140.dll, etc.) into the 'application' component
+# because the default rule uses the 'Unspecified' component, which is excluded.
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP ON)
 include(InstallRequiredSystemLibraries)
+install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION bin COMPONENT application)
+
 set(CPACK_PACKAGE_NAME "RetailLabeler")
 set(CPACK_PACKAGE_VENDOR "YourCompany")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RetailLabeler - Retail Label System")
@@ -267,18 +322,11 @@ set(CPACK_PACKAGE_CONTACT "youremail@example.com")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_EXECUTABLES "RetailLabeler" "RetailLabeler")
 
-# Install target
-install(TARGETS RetailLabeler
-    RUNTIME DESTINATION bin
-)
+
 
 # -------------------
 # CPack configuration (improved defaults)
 # -------------------
-# Prefer NSIS for Windows packaging; users can override by setting CPACK_GENERATOR
-if(NOT DEFINED CPACK_GENERATOR)
-    set(CPACK_GENERATOR "NSIS")
-endif()
 
 # Build a predictable package file name including version and arch
 if(NOT DEFINED CPACK_PACKAGE_FILE_NAME)
@@ -292,40 +340,72 @@ else()
     list(APPEND CPACK_SOURCE_IGNORE_FILES "/build/" "\\.git/" "\\.vs/" "~$" "\\.DS_Store$")
 endif()
 
-if(WIN32)
-    # NSIS-friendly options
-    set(CPACK_NSIS_DISPLAY_NAME "${CPACK_PACKAGE_NAME}")
-    set(CPACK_NSIS_PACKAGE_NAME "${CPACK_PACKAGE_NAME}")
-    set(CPACK_NSIS_CREATE_DESKTOP_LINKS ON)
-    set(CPACK_NSIS_SHORTCUT_NAME "${CPACK_PACKAGE_NAME}")
-    set(CPACK_NSIS_SHORTCUT_TARGET "${CPACK_PACKAGE_EXECUTABLES}")
-    # Ensure installer shows proper product version
-# Ensure NSIS-related CPACK cache entries are well-formed and overwrite any
-# previously cached malformed values (this avoids makensis failing due to bad
-# CreateShortCut lines injected into the generated script).
-set(CPACK_NSIS_EXECUTABLES_DIRECTORY "bin" CACHE STRING "Executables directory within package (relative to install dir)" FORCE)
-set(CPACK_NSIS_MENU_LINKS "${CPACK_NSIS_EXECUTABLES_DIRECTORY}/RetailLabeler.exe;RetailLabeler" CACHE STRING "Start Menu link entries" FORCE)
-set(CPACK_NSIS_SHORTCUT_TARGET "${CPACK_NSIS_EXECUTABLES_DIRECTORY}/RetailLabeler.exe" CACHE STRING "Shortcut target executable relative to install dir" FORCE)
-set(CPACK_NSIS_CREATE_ICONS_EXTRA "" CACHE STRING "Extra CreateShortCut entries (empty)" FORCE)
-
-# Re-include CPack after forcing sanitized CPACK_NSIS variables so the
-# generated CPackConfig.cmake is written with the corrected values (avoids
-# stale/malformed cached entries producing invalid NSIS scripts).
+# Qt Installer Framework location
+set(QTIFW_ROOT "D:/Qt/Tools/QtInstallerFramework/4.10" CACHE PATH "Path to Qt Installer Framework")
+if(EXISTS "${QTIFW_ROOT}")
+    set(CPACK_IFW_ROOT "${QTIFW_ROOT}")
 endif()
 
-# Ensure CPACK_NSIS_EXTRA_INSTALL_COMMANDS is empty so no malformed value is
-# written into CPackConfig.cmake. Shortcuts are configured via
-# CPACK_NSIS_CREATE_DESKTOP_LINKS and CPACK_NSIS_CREATE_ICONS_EXTRA above.
-set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "" CACHE STRING "Extra NSIS install commands (empty)" FORCE)
+if(WIN32)
+    set(CPACK_GENERATOR "IFW")
+    
+    # QtIFW Configuration
+    set(CPACK_IFW_PACKAGE_GROUP "RetailLabeler")
+    set(CPACK_IFW_PACKAGE_NAME "RetailLabeler")
+    set(CPACK_IFW_PACKAGE_TITLE "Retail Labeler System")
+    set(CPACK_IFW_PACKAGE_PUBLISHER "JamesJar42")
+    set(CPACK_IFW_PRODUCT_VERSION "${PROJECT_VERSION}")
+    set(CPACK_IFW_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
+    set(CPACK_IFW_PACKAGE_WINDOW_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
+    set(CPACK_IFW_PACKAGE_START_MENU_DIRECTORY "RetailLabeler")
+    set(CPACK_IFW_PACKAGE_CONTROL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/controlscript.qs")
+        
+    set(CPACK_COMPONENTS_ALL application desktop_shortcut)
+endif()
 
-# Prefer our custom installer UI so we can have the Desktop icon checkbox
-# default to checked. Place this before including CPack so the value is
-# recorded into the generated CPack configuration at configure time.
-configure_file("${CMAKE_SOURCE_DIR}/cmake/NSIS.InstallOptions.ini" "${CMAKE_BINARY_DIR}/NSIS.InstallOptions.ini" COPYONLY)
-set(CPACK_NSIS_INSTALLER_UI "${CMAKE_BINARY_DIR}/NSIS.InstallOptions.ini" CACHE PATH "Custom NSIS installer UI (InstallOptions.ini)" FORCE)
+# Include CPackComponent to ensure we can use its macros before CPack module is potentially included
+include(CPackComponent)
+
+if(WIN32)
+    # Define Application Component (Core)
+    cpack_add_component(application
+        DISPLAY_NAME "Retail Labeler Core"
+        DESCRIPTION "The core application and dependencies."
+        REQUIRED
+    )
+
+    # Define Desktop Shortcut Component properly
+    # Removing 'DISABLED' and 'GROUP' to ensure it appears checked and visible in the root list
+    cpack_add_component(desktop_shortcut
+        DISPLAY_NAME "Desktop Shortcut"
+        DESCRIPTION "Create a shortcut on the Windows Desktop."
+    )
+    
+    # Add a dummy file so CPack generates the component package
+    install(FILES "${CMAKE_SOURCE_DIR}/README.txt" DESTINATION bin COMPONENT desktop_shortcut)
+endif()
+
 
 include(CPack)
+include(CPackIFW)
 
+if(WIN32)
+    # 1. Main Application Component (Required)
+    cpack_ifw_configure_component(application
+        SCRIPT "${CMAKE_SOURCE_DIR}/cmake/installscript.qs"
+        DISPLAY_NAME "Retail Labeler Core"
+        DESCRIPTION "The main application executables and libraries."
+        REQUIRED
+        SORTING_PRIORITY 90
+    )
 
-# Optionally, add resources if needed
-# qt_add_resources(RetailLabeler resources/labelTemplate.qrc)
+    # 2. Desktop Shortcut Component (Optional, Default Checked)
+    cpack_ifw_configure_component(desktop_shortcut
+        SCRIPT "${CMAKE_SOURCE_DIR}/cmake/desktopshortcut.qs"
+        DISPLAY_NAME "Desktop Shortcut"
+        DESCRIPTION "Create a shortcut on the Windows Desktop."
+        DEFAULT "true"
+        SORTING_PRIORITY 80
+    )
+endif()
+

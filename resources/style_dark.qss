@@ -53,3 +53,181 @@ QScrollBar::handle:vertical { background: rgba(255,255,255,0.06); border-radius:
 
 QDialog { background: #0b0f12; }
 QStatusBar { background: transparent; color: #9fb0ce; }
+
+/* Phase 1: clear focus visibility for keyboard navigation */
+QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+	border: 2px solid #66a0ff;
+}
+
+QTableWidget:focus, QTableView:focus {
+	border: 2px solid #66a0ff;
+}
+
+#batchActionBar {
+	background: #172031;
+	border: 1px solid #2e4263;
+	border-radius: 8px;
+}
+
+#undoActionBar {
+	background: #131b29;
+	border: 1px solid #2f4261;
+	border-radius: 8px;
+}
+
+#undoActionLabel {
+	color: #d8e4f8;
+}
+
+#undoActionButton {
+	background: #233550;
+	border: 1px solid #45628f;
+	color: #dce8ff;
+}
+
+/* PrintDialog Styles */
+#pd_Sidebar {
+	background: #12171b;
+	border-right: 1px solid #27313a;
+}
+#pd_SidebarScroll {
+	background: #12171b;
+	border-right: 1px solid #27313a;
+}
+#pd_Title {
+	font-size: 18px;
+	font-weight: 700;
+	color: #f1f5fb;
+}
+#pd_Subtitle {
+	color: #9fb0c8;
+	font-size: 11px;
+}
+#pd_Header {
+	font-weight: 700;
+	color: #c8d4e4;
+	font-size: 11px;
+}
+#pd_AdvancedToggle {
+	text-align: left;
+	font-weight: 600;
+	min-height: 26px;
+	padding: 4px 10px;
+}
+#pd_Card {
+	background: #1a2127;
+	border: 1px solid #2a3138;
+	border-radius: 8px;
+}
+#pd_Card QComboBox,
+#pd_Card QSpinBox,
+#pd_Card QCheckBox {
+	min-height: 24px;
+}
+#pd_Card QLabel {
+	color: #d6e1ef;
+}
+#pd_Card QComboBox,
+#pd_Card QSpinBox {
+	background: #0f1417;
+	border: 1px solid #2f3943;
+	border-radius: 8px;
+	padding: 2px 8px;
+	color: #e6eef6;
+}
+#pd_Combo {
+	background: #0f1417;
+	border: 1px solid rgba(255,255,255,0.04);
+	border-radius: 8px;
+	padding: 6px 8px;
+	color: #e6eef6;
+}
+#pd_Combo::drop-down {
+	border: none;
+	width: 20px;
+}
+#pd_Combo QAbstractItemView {
+	background: #0f1417;
+	border: 1px solid #2a3138;
+	color: #e6eef6;
+	selection-background-color: #4f7be6;
+}
+#pd_InfoPanel {
+	background: #1f262d;
+	border: 1px solid #2a3138;
+	border-radius: 8px;
+}
+#pd_InfoLabel {
+	color: #b5c2d1;
+	font-size: 11px;
+}
+#pd_PrintBtn {
+	background: #4f7be6;
+	color: white;
+	border: 1px solid #4f7be6;
+	border-radius: 8px;
+}
+#pd_PrintBtn:hover {
+	background: #3e68c9;
+}
+#pd_CancelBtn {
+	background: #0f1417;
+	color: #e6eef6;
+	border: 1px solid #2a3138;
+	border-radius: 8px;
+}
+#pd_CancelBtn:hover {
+	background: rgba(255,255,255,0.04);
+}
+#pd_Toolbar {
+	background: #141a1f;
+	border: 1px solid #2a3138;
+	border-radius: 8px;
+}
+#pd_Toolbar QLabel {
+	color: #d6e1ef;
+	font-size: 11px;
+}
+#pd_ZoomValue {
+	font-weight: 700;
+	color: #e6eef6;
+}
+#pd_ZoomBanner {
+	font-size: 12px;
+	font-weight: 700;
+	color: #e6eef6;
+}
+#pd_ZoomSlider::groove:horizontal {
+	border: 1px solid #32404d;
+	height: 8px;
+	background: #1f2830;
+	border-radius: 4px;
+}
+#pd_ZoomSlider::sub-page:horizontal {
+	background: #4f7be6;
+	border-radius: 4px;
+}
+#pd_ZoomSlider::handle:horizontal {
+	background: #dbe7ff;
+	border: 1px solid #4f7be6;
+	width: 14px;
+	margin: -5px 0;
+	border-radius: 7px;
+}
+#pd_PageLabel {
+	font-weight: bold;
+	color: #e6eef6;
+	font-size: 12px;
+}
+
+/* Ensure standard buttons inside sidebar/toolbar match the dark theme */
+#pd_Sidebar QPushButton, #pd_Toolbar QPushButton {
+	background: #0f1417;
+	border: 1px solid rgba(255,255,255,0.04);
+	color: #e6eef6;
+	min-height: 26px;
+	padding: 4px 10px;
+}
+#pd_Sidebar QPushButton:hover, #pd_Toolbar QPushButton:hover {
+	background: rgba(255,255,255,0.02);
+}

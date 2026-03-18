@@ -27,6 +27,8 @@ class labelSystem
 	labelConfig labelconfig;
 	std::vector<cv::Mat> loadImages(const std::vector<std::string>& filenames);
 	QImage cvMatToQImage(const cv::Mat& mat);
+	std::vector<cv::Mat> buildLabelPages(const labelConfig &cfg, bool &labelsFound);
+	std::vector<QImage> buildPrintImages(const labelConfig &cfg);
 
 	void init(const std::string &path);
 
@@ -50,25 +52,22 @@ public:
 	void removeProducts();
 	void editName(product& pd);
 	void editPrice(product& pd);
-	void editSize(product& pd);
 	void editBarcode(product& pd);
 	void searchByBarcode();
 	void searchByName();
 	void editByBarcode();
-	void flagProducts();
-	// Flag/unflag multiple products by barcode. Returns number of matched products updated.
-	int flagProducts(const std::vector<std::string> &barcodes, bool setFlag = true);
-	void flagAll();
-	void unflagAll();
+	void queueProducts();
+	void clearAllFlags();
+	// Add quantity to match products by barcode. Returns number of matched products updated.
+	int queueProducts(const std::vector<std::string> &barcodes, int quantity = 1);
+	void addAllToQueue(int quantity = 1);
+	void clearQueue();
 	void changePrice();
 	void deletePages();
 	// Attempt to delete generated pages after a delay with retries. Returns true on success.
 	bool deletePagesWithRetry(int initialDelayMs = 2000, int maxAttempts = 10, int attemptIntervalMs = 500);
 	void print();
 	void viewLabels();
-
-	// Clear label flags for all products
-	void clearLabelFlags();
 
 	// Accessors for the label configuration
 	labelConfig getLabelConfig() const;

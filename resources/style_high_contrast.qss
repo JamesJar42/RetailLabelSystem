@@ -1,0 +1,71 @@
+/* High contrast theme for accessibility */
+QWidget, QMainWindow {
+    background: #000000;
+    color: #ffffff;
+    font-family: "Segoe UI";
+}
+
+QMenuBar, QMenu, QStatusBar, QToolBar {
+    background: #000000;
+    color: #ffffff;
+}
+
+QMenu {
+    border: 2px solid #ffffff;
+}
+
+QPushButton, QToolButton, QLineEdit, QComboBox, QSpinBox, QTextEdit, QPlainTextEdit {
+    background: #000000;
+    color: #ffffff;
+    border: 2px solid #ffffff;
+    border-radius: 4px;
+    padding: 6px 8px;
+}
+
+QPushButton:hover, QToolButton:hover {
+    background: #1a1a1a;
+}
+
+QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
+QTableWidget:focus, QTableView:focus {
+    border: 3px solid #ffff00;
+}
+
+QTableWidget, QTableView {
+    background: #000000;
+    color: #ffffff;
+    gridline-color: #ffffff;
+    selection-background-color: #ffff00;
+    selection-color: #000000;
+    alternate-background-color: #111111;
+    border: 2px solid #ffffff;
+}
+
+QHeaderView::section {
+    background: #000000;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+    font-weight: 700;
+    padding: 8px;
+}
+
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #000000;
+    border: 1px solid #ffffff;
+}
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #ffffff;
+}
+
+#batchActionBar, #undoActionBar {
+    background: #000000;
+    border: 2px solid #ffffff;
+    border-radius: 6px;
+}
+
+#undoActionButton {
+    background: #ffff00;
+    color: #000000;
+    border: 2px solid #ffffff;
+}

@@ -6,6 +6,17 @@
 #include "labelSystem.h"
 #include <QFileSystemWatcher>
 #include <QTimer>
+#include <QString>
+#include <functional>
+#include <QMetaObject>
+
+class QLabel;
+class QLineEdit;
+class QComboBox;
+class QFrame;
+class QTableWidgetItem;
+class QPushButton;
+class QAction;
 
 namespace Ui { class MainWindow; }
 
@@ -27,13 +38,41 @@ private:
     labelSystem *ls;
     bool isHighContrast;
     QFileSystemWatcher *qssWatcher;
+    QFileSystemWatcher *databaseWatcher;
     QTimer *qssReloadTimer;
     // Theme actions
     QAction *themeLightAct;
     QAction *themeDarkAct;
+    QAction *themeHighContrastAct;
     QAction *themeReloadAct;
     QAction *themeChooseCustomAct;
     QString currentCustomQssPath;
+    QString autosavePath;
+    QString currentSearchQuery;
+    QString currentQuickFilter;
+    QLineEdit *searchBarInput;
+    QLabel *resultsSummaryLabel;
+    QFrame *batchActionBar;
+    QFrame *undoActionBar;
+    QLabel *undoActionLabel;
+    QPushButton *undoActionButton;
+    QTimer *undoActionExpiryTimer;
+    QTimer *undoActionCountdownTimer;
+    int undoActionSecondsRemaining;
+    QString undoActionMessage;
+    std::function<void()> pendingUndoAction;
+    QAction *openQueueWorkspaceAction;
+    bool focusDebugEnabled;
+    QMetaObject::Connection focusDebugConnection;
+
+    void rebuildProductTable();
+    void updateBatchActionBar();
+    void updateResultsSummary(int shown, int total);
+    bool passesQuickFilter(const product &pd) const;
+    bool validateAndApplyCellEdit(QTableWidgetItem *item);
+    void queueUndoAction(const QString &message, std::function<void()> undoAction);
+    void clearUndoAction();
+    void updateFocusDebugLogging();
 
 private slots:
     void toggleTheme();
@@ -41,7 +80,9 @@ private slots:
     void reloadStylesheet();
     void onQssFileChanged(const QString &path);
     void onQssDirChanged(const QString &path);
+    void onDatabaseFileChanged(const QString &path);
     void updateThemeMenuChecks();
+    void updateAddButtonState();
 };
 
 #endif // MAINWINDOW_H

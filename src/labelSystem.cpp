@@ -1,7 +1,27 @@
 #include "../include/labelSystem.h"
 #include "../include/Menu.h"
+#include "../include/PrintDialog.h"
 #include <thread>
 #include <chrono>
+#include <QSettings>
+#include <QFile>
+#include <QPrintDialog>
+#include <QDateTime>
+#include <QPainter>
+#include <QFont>
+#include <QPen>
+
+namespace {
+void appendCrashTrace(const QString &msg) {
+	QFile f("resources/CrashTrace.log");
+	if (f.open(QIODevice::Append | QIODevice::Text)) {
+		QString line = QString("[%1] %2\n")
+			.arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz"), msg);
+		f.write(line.toUtf8());
+		f.close();
+	}
+}
+}
 
 /*
 * 
@@ -43,6 +63,20 @@ void labelSystem::init(const std::string& path)
 	}
 
 	config.close();
+
+	// Apply runtime/user overrides from settings (if present) so print layout
+	// does not require manual edits to Config.txt.
+	QSettings settings;
+	labelconfig.TL = settings.value("printLayout/TL", labelconfig.TL).toInt();
+	labelconfig.TS = settings.value("printLayout/TS", labelconfig.TS).toInt();
+	labelconfig.PS = settings.value("printLayout/PS", labelconfig.PS).toInt();
+	labelconfig.TX = settings.value("printLayout/TX", labelconfig.TX).toInt();
+	labelconfig.TY = settings.value("printLayout/TY", labelconfig.TY).toInt();
+	labelconfig.PX = settings.value("printLayout/PX", labelconfig.PX).toInt();
+	labelconfig.PY = settings.value("printLayout/PY", labelconfig.PY).toInt();
+	labelconfig.STX = settings.value("printLayout/STX", labelconfig.STX).toInt();
+	labelconfig.STY = settings.value("printLayout/STY", labelconfig.STY).toInt();
+	labelconfig.XO = settings.value("printLayout/XO", labelconfig.XO).toInt();
 }
 
 // Resolve a possibly-relative resource path to an absolute path based on the
@@ -72,6 +106,149 @@ std::vector<cv::Mat> labelSystem::loadImages(const std::vector<std::string>& fil
 
 QImage labelSystem::cvMatToQImage(const cv::Mat& mat) {
 	return QImage(mat.data, mat.cols, mat.rows, mat.step, QImage::Format_RGB888).rgbSwapped();
+}
+
+std::vector<cv::Mat> labelSystem::buildLabelPages(const labelConfig &cfg, bool &labelsFound) {
+	appendCrashTrace("buildLabelPages: start");
+	labelsFound = false;
+	std::vector<cv::Mat> pages;
+
+	QSettings settings;
+	QString customLogo = settings.value("custom_logo_path").toString();
+	const bool useQtAddText = settings.value("print/useQtAddText", true).toBool();
+	std::string logoPathToUse;
+	if (!customLogo.isEmpty() && QFile::exists(customLogo)) {
+		logoPathToUse = customLogo.toStdString();
+	}
+
+	cv::Mat img;
+	if (!logoPathToUse.empty()) {
+		img = cv::imread(logoPathToUse, cv::IMREAD_COLOR);
+	}
+	if (img.empty()) {
+		img = cv::Mat(320, 480, CV_8UC3, cv::Scalar(255, 255, 255));
+	}
+
+	cv::Mat labels(3508, 2480, CV_8UC3, cv::Scalar(255, 255, 255));
+	int x_offset = cfg.XO;
+	int y_offset = 0;
+
+	for (product& pd : dtb.listProduct()) {
+		int qty = pd.getLabelQuantity();
+		if (qty <= 0) {
+			continue;
+		}
+
+		for (int i = 0; i < qty; ++i) {
+			labelsFound = true;
+
+			cv::Point porg(cfg.PX, cfg.PY);
+			cv::Point dorg(cfg.TX, cfg.TY);
+
+			cv::Mat resized;
+			cv::Mat temp;
+			img.copyTo(temp);
+
+			auto drawWithQPainter = [&](const std::string &text, const cv::Point &pt, int pixelSize, const QColor &color) {
+				QImage qimg(temp.data, temp.cols, temp.rows, static_cast<int>(temp.step), QImage::Format_BGR888);
+				QPainter painter(&qimg);
+				painter.setRenderHint(QPainter::Antialiasing, true);
+				painter.setRenderHint(QPainter::TextAntialiasing, true);
+				QFont font("Times New Roman");
+				font.setPixelSize(std::max(1, pixelSize));
+				painter.setFont(font);
+				painter.setPen(QPen(color));
+				painter.drawText(QPoint(pt.x, pt.y), QString::fromStdString(text));
+				painter.end();
+			};
+
+			std::string p = std::to_string(pd.getPrice());
+			std::string rp = p.substr(0, p.find(".") + 3);
+			std::string priceText = "£" + rp;
+
+			auto clampedScale = [](int s, double minS, double maxS, double divisor) {
+				double scale = static_cast<double>(s) / divisor;
+				return std::max(minS, std::min(maxS, scale));
+			};
+
+			const double priceScale = clampedScale(cfg.PS, 0.5, 6.0, 60.0);
+			const double textScale = clampedScale(cfg.TS, 0.4, 4.0, 45.0);
+			const int priceThickness = std::max(1, static_cast<int>(priceScale));
+			const int textThickness = std::max(1, static_cast<int>(textScale));
+
+			if (useQtAddText) {
+				drawWithQPainter(priceText, porg, cfg.PS, QColor(255, 0, 0));
+			} else {
+				cv::putText(temp, priceText, porg, cv::FONT_HERSHEY_SIMPLEX, priceScale,
+					cv::Scalar(0, 0, 255), priceThickness, cv::LINE_AA);
+			}
+
+			if (pd.getDescription().append(" ").size() > cfg.TL)
+			{
+				std::string str = pd.getDescription().append(" ");
+				int pos = str.find_last_of(' ', cfg.TL);
+
+				std::string subStr1 = str.substr(0, pos);
+				std::string subStr2 = str.substr(pos + 1, (str.size() - 1));
+
+				cv::Point dorg1(cfg.STX, cfg.STY);
+
+				if (useQtAddText) {
+					drawWithQPainter(subStr1, dorg, cfg.TS, QColor(12, 12, 12));
+					drawWithQPainter(subStr2, dorg1, cfg.TS, QColor(12, 12, 12));
+				} else {
+					cv::putText(temp, subStr1, dorg, cv::FONT_HERSHEY_SIMPLEX, textScale,
+						cv::Scalar(12, 12, 12), textThickness, cv::LINE_AA);
+					cv::putText(temp, subStr2, dorg1, cv::FONT_HERSHEY_SIMPLEX, textScale,
+						cv::Scalar(12, 12, 12), textThickness, cv::LINE_AA);
+				}
+			}
+			else
+			{
+				if (useQtAddText) {
+					drawWithQPainter(pd.getDescription(), dorg, cfg.TS, QColor(12, 12, 12));
+				} else {
+					cv::putText(temp, pd.getDescription(), dorg, cv::FONT_HERSHEY_SIMPLEX, textScale,
+						cv::Scalar(12, 12, 12), textThickness, cv::LINE_AA);
+				}
+			}
+
+			cv::resize(temp, resized, cv::Size(480, 320), cv::INTER_LINEAR);
+
+			if (x_offset + resized.cols > labels.cols) {
+				y_offset += resized.rows;
+				x_offset = cfg.XO;
+			}
+			if (y_offset + resized.rows > labels.rows)
+			{
+				pages.push_back(labels.clone());
+				labels = cv::Mat(3508, 2480, CV_8UC3, cv::Scalar(255, 255, 255));
+				y_offset = 0;
+				x_offset = cfg.XO;
+			}
+
+			cv::Mat roi(labels, cv::Rect(x_offset, y_offset, resized.cols, resized.rows));
+			resized.copyTo(roi);
+			x_offset += resized.cols;
+		}
+	}
+
+	if (labelsFound) {
+		pages.push_back(labels);
+	}
+	appendCrashTrace(QString("buildLabelPages: end pages=%1 labelsFound=%2").arg(static_cast<int>(pages.size())).arg(labelsFound));
+
+	return pages;
+}
+
+std::vector<QImage> labelSystem::buildPrintImages(const labelConfig &cfg) {
+	bool labelsFound = false;
+	std::vector<cv::Mat> pages = buildLabelPages(cfg, labelsFound);
+	std::vector<QImage> images;
+	for (const cv::Mat &page : pages) {
+		images.push_back(cvMatToQImage(page));
+	}
+	return images;
 }
 
 void labelSystem::UpperCaseWords(std::string &strings)
@@ -108,7 +285,8 @@ void labelSystem::UpperCaseWords(std::string &strings)
 
 }
 
-void labelSystem::printPreview(QPrinter& printer, const std::vector<QImage>& images) {
+void labelSystem::printPreview(QPrinter& printer, const std::vector<QImage>& images) 
+{
 
 	QPainter painter(&printer);
 	QRect rect = painter.viewport();
@@ -131,35 +309,106 @@ void labelSystem::printPreview(QPrinter& printer, const std::vector<QImage>& ima
 }
 
 void labelSystem::printImages(const std::vector<cv::Mat>& cvImages) {
+	appendCrashTrace(QString("printImages: start cvImages=%1").arg(static_cast<int>(cvImages.size())));
 	std::vector<QImage> images;
 	for (const cv::Mat& cvImg : cvImages) {
 		images.push_back(cvMatToQImage(cvImg));
 	}
+	appendCrashTrace(QString("printImages: converted images=%1").arg(static_cast<int>(images.size())));
 
-	QPrinter *printer = new QPrinter();
-	QPrintPreviewDialog *preview = new QPrintPreviewDialog(printer);
+	QSettings settings;
+	const bool useNativePrintDialog = settings.value("print/useNativeDialog", false).toBool();
+	if (useNativePrintDialog) {
+		appendCrashTrace("printImages: native dialog create");
+		QPrinter printer(QPrinter::ScreenResolution);
+		QPrintDialog nativeDialog(&printer);
+		appendCrashTrace("printImages: native dialog exec");
+		if (nativeDialog.exec() == QDialog::Accepted) {
+			appendCrashTrace("printImages: native dialog accepted");
+			printPreview(printer, images);
+		}
+		appendCrashTrace("printImages: native dialog done");
 
-	QObject::connect(preview, &QPrintPreviewDialog::paintRequested, [this, &images](QPrinter* printer) {
-		printPreview(*printer, images);
-	});
-
-	// When the preview dialog finishes (closed), start background deletion of generated pages.
-	QObject::connect(preview, &QDialog::finished, [this, preview](int) {
-		// Start deletion asynchronously to avoid blocking the GUI thread. Use a short delay/retry inside deletePagesWithRetry.
 		std::thread([this]() {
-			// Use the same defaults used elsewhere; this will retry deletions if files are still in use.
+			appendCrashTrace("printImages: deletePagesWithRetry begin");
 			this->deletePagesWithRetry(2000, 12, 500);
+			appendCrashTrace("printImages: deletePagesWithRetry end");
 		}).detach();
+		appendCrashTrace("printImages: native path return");
+		return;
+	}
 
-		// Clean up the preview dialog object
-		preview->deleteLater();
-	});
+	PrintLayoutConfig initialLayout {
+		labelconfig.TL,
+		labelconfig.TS,
+		labelconfig.PS,
+		labelconfig.TX,
+		labelconfig.TY,
+		labelconfig.PX,
+		labelconfig.PY,
+		labelconfig.STX,
+		labelconfig.STY,
+		labelconfig.XO
+	};
 
-	preview->exec();
+	QString configSummary = QString(
+		"From Config.txt\n"
+		"TL=%1  TS=%2  PS=%3\n"
+		"TX=%4  TY=%5\n"
+		"PX=%6  PY=%7\n"
+		"STX=%8  STY=%9\n"
+		"XO=%10"
+	)
+		.arg(labelconfig.TL)
+		.arg(labelconfig.TS)
+		.arg(labelconfig.PS)
+		.arg(labelconfig.TX)
+		.arg(labelconfig.TY)
+		.arg(labelconfig.PX)
+		.arg(labelconfig.PY)
+		.arg(labelconfig.STX)
+		.arg(labelconfig.STY)
+		.arg(labelconfig.XO);
+
+	PrintDialog dialog(
+		images,
+		configSummary,
+		initialLayout,
+		[this](const PrintLayoutConfig &cfg) {
+			labelConfig internalCfg{cfg.TL, cfg.TS, cfg.PS, cfg.TX, cfg.TY, cfg.PX, cfg.PY, cfg.STX, cfg.STY, cfg.XO};
+			this->setLabelConfig(internalCfg);
+			return this->buildPrintImages(internalCfg);
+		}
+	);
+	appendCrashTrace("printImages: custom dialog exec");
+
+	dialog.exec();
+	appendCrashTrace("printImages: custom dialog done");
+
+	// Start deletion asynchronously after dialog returns so GUI responsiveness is preserved.
+	std::thread([this]() {
+		this->deletePagesWithRetry(2000, 12, 500);
+	}).detach();
 }
 
 void labelSystem::process()
 {
+    // Try to load from CSV first
+    CSVMapping map;
+    map.hasHeader = true;
+    map.barcodeCol = 0;
+    map.nameCol = 1;
+    map.priceCol = 2;
+    map.originalPriceCol = 4;
+    map.labelQuantityCol = 5;
+
+    if (dtb.loadFromCSV(resourcePath("resources/Database.csv"), map)) {
+        std::cout << "Database loaded from CSV." << std::endl;
+        return;
+    }
+    
+    // Fallback or legacy (can be removed if strictly moving to CSV)
+    std::cout << "Database.csv not found, checking legacy..." << std::endl;
 
 	int dtbSize;
 
@@ -173,7 +422,8 @@ void labelSystem::process()
 		for (int i = 0; i < dtbSize; i++) {
 			std::string type, Name, Barcode, Size;
 			float Price = 0, PriceEach;
-			bool Flag = false;
+			int Quantity = 0;
+            bool tempFlag = false;
 
 			while (database >> type)
 			{
@@ -196,15 +446,21 @@ void labelSystem::process()
 				}
 
 				if (type == "Flag:") {
-					database >> Flag;
+					database >> tempFlag;
+                    Quantity = tempFlag ? 1 : 0;
 				}
+                
+                if (type == "Quantity:") {
+                    database >> Quantity;
+                }
 
 				if (type == "Size:") {
-					database >> Size;
+                    std::string tempSize;
+					database >> tempSize;
 				}
 
 				if (type == "End") {
-					dtb.add(product(Name, Price, Size, Barcode, Flag));
+					dtb.add(product(Name, Price, Barcode, Quantity));
 				}
 			}
 
@@ -250,86 +506,82 @@ void labelSystem::save()
 	fout.close();
 }
 
-void labelSystem::addProduct()
-{
-	bool error = false;
+// void labelSystem::addProduct()
+// {
+// 	bool error = false;
 
-	clear();
-	do {
-		error = false;
-		try {
-
-
-			std::string description, barcode, size = "";
-			float price;
-			bool labelFlag = true;
-
-			product pd(description, price = 0, size, barcode, labelFlag);
-
-			std::cin.clear();
-			std::cin.ignore(100, '\n');
-
-			std::cout << "Please Enter Product Name (Press 'q' to Exit): ";
-			std::getline(std::cin, description);
-			if (description == "q")
-			{
-				break;
-			}
-			UpperCaseWords(description);
-			std::cout << std::endl;
-
-			std::cout << "Please Enter the Price: £";
-			std::cin >> price;
-			std::cout << std::endl;
-
-			if (std::cin.fail())
-			{
-				throw "Error";
-			}
-
-			std::cin.clear();
-			std::cin.ignore(100, '\n');
-
-			std::cout << "Please Enter the Size: ";
-			std::getline(std::cin, size);
-			std::cout << std::endl;
-
-			std::cout << "Please Enter the Barcode: ";
-			std::cin >> barcode;
-			std::cout << std::endl;
-			for (product& pd : dtb.listProduct())
-			{
-				if (barcode == pd.getBarcode())
-				{
-					std::cout << "A Product Already Exists With That Barcode" << std::endl;
-					throw "Error";
-				}
-			}
-
-			pd.setDescription(description);
-			pd.setPrice(price);
-			pd.setSize(size);
-			pd.setBarcode(barcode);
-
-			dtb.add(pd);
-
-			clear();
-			std::cout << "Product Created" << std::endl << "Product Flagged" << std::endl;
-		}
-		catch (...)
-		{
-			std::cout << "Error Occurred. Please Try Again." << std::endl;
-			std::cout << std::endl;
-			error = true;
-			std::cin.clear();
-			std::cin.ignore(100, '\n');
-		}
+// 	clear();
+// 	do {
+// 		error = false;
+// 		try {
 
 
-	} while (error);
+// 			// By default, newly added products are flagged (quantity 1)
+// 			int labelQuantity = 1;
+// 			std::string description, barcode;
+// 			float price = 0;
+
+// 			product pd(description, price, barcode, labelQuantity);
+
+// 			std::cin.clear();
+// 			std::cin.ignore(100, '\n');
+
+// 			std::cout << "Please Enter Product Name (Press 'q' to Exit): ";
+// 			std::getline(std::cin, description);
+// 			if (description == "q")
+// 			{
+// 				break;
+// 			}
+// 			UpperCaseWords(description);
+// 			std::cout << std::endl;
+
+// 			std::cout << "Please Enter the Price: £";
+// 			std::cin >> price;
+// 			std::cout << std::endl;
+
+// 			if (std::cin.fail())
+// 			{
+// 				throw "Error";
+// 			}
+
+// 			std::cin.clear();
+// 			std::cin.ignore(100, '\n');
+
+// 			std::cout << "Please Enter the Barcode: ";
+// 			std::cin >> barcode;
+// 			std::cout << std::endl;
+// 			for (product& pd : dtb.listProduct())
+// 			{
+// 				if (barcode == pd.getBarcode())
+// 				{
+// 					std::cout << "A Product Already Exists With That Barcode" << std::endl;
+// 					throw "Error";
+// 				}
+// 			}
+
+// 			pd.setDescription(description);
+// 			pd.setPrice(price);
+// 			pd.setBarcode(barcode);
+
+// 			dtb.add(pd);
+
+// 			clear();
+// 			std::cout << "Product Created" << std::endl << "Product Flagged" << std::endl;
+// 		}
+// 		catch (...)
+// 		{
+// 			std::cout << "Error Occurred. Please Try Again." << std::endl;
+// 			std::cout << std::endl;
+// 			error = true;
+// 			std::cin.clear();
+// 			std::cin.ignore(100, '\n');
+// 		}
 
 
-}
+// 	} while (error);
+
+
+// }
 
 void labelSystem::removeProducts()
 {
@@ -399,19 +651,7 @@ void labelSystem::editPrice(product& pd)
 	} while (error);
 }
 
-void labelSystem::editSize(product& pd)
-{
-	clear();
 
-	std::string size;
-
-	std::cin.ignore(100, '\n');
-
-	std::cout << "Enter New Product Size: ";
-	std::getline(std::cin, size);
-
-	pd.setSize(size);
-}
 
 void labelSystem::editBarcode(product& pd)
 {
@@ -491,7 +731,7 @@ void labelSystem::editByBarcode()
 	std::cin >> pBarcode;
 	std::cout << std::endl;
 
-	vector<string> items = { "Edit Name", "Edit Price", "Edit Size", "Edit Barcode", "Return" };
+	vector<string> items = { "Edit Name", "Edit Price", "Edit Barcode", "Return" };
 
 	Menu edit("Edit", items);
 
@@ -512,7 +752,6 @@ void labelSystem::editByBarcode()
 				std::cout << "Products Current Information:" << std::endl;
 				std::cout << "Name: " << pdt.getDescription() << std::endl;
 				std::cout << "Price: " << pdt.getPrice() << std::endl;
-				std::cout << "Size: " << pdt.getSize() << std::endl;
 				std::cout << "Barcode: " << pdt.getBarcode() << std::endl;
 
 				std::cout << std::endl;
@@ -532,12 +771,9 @@ void labelSystem::editByBarcode()
 					editPrice(pdt);
 					break;
 				case 3:
-					editSize(pdt);
-					break;
-				case 4:
 					editBarcode(pdt);
 					break;
-				case 5:
+				case 4:
 					clear();
 					break;
 				default:
@@ -548,7 +784,7 @@ void labelSystem::editByBarcode()
 					break;
 				}
 
-			} while (choice != 5);
+			} while (choice != 4);
 		}
 	}
 	if (found == false)
@@ -558,19 +794,18 @@ void labelSystem::editByBarcode()
 	}
 }
 
-void labelSystem::flagProducts()
+void labelSystem::queueProducts()
 {
 
 	bool done;
 	clear();
 	do
 	{
-
 		std::string barcode;
-		std::cout << "Enter Barcode or 'q' to return: ";
+		std::cout << "Enter Barcode to add to queue or 'q' to return: ";
 		std::cin >> barcode;
 		std::cout << std::endl;
-		bool finished = false;
+		bool match = false;
 
 		if (barcode == "q")
 		{
@@ -581,20 +816,12 @@ void labelSystem::flagProducts()
 		{
 			if (pd.getBarcode() == barcode)
 			{
-				finished = true;
-				if (!pd.getLabelFlag())
-				{
-					pd.setLabelFlag(true);
-					std::cout << "Product Flagged" << std::endl;
-				}
-				else
-				{
-					pd.setLabelFlag(false);
-					std::cout << "Product Flag Removed" << std::endl;
-				}
+				match = true;
+				pd.setLabelQuantity(pd.getLabelQuantity() + 1);
+				std::cout << "Added to queue. New Quantity: " << pd.getLabelQuantity() << std::endl;
 			}
 		}
-		if (finished == false)
+		if (!match)
 		{
 			std::cout << "Product Not Found" << std::endl;
 		}
@@ -603,8 +830,8 @@ void labelSystem::flagProducts()
 	clear();
 }
 
-// Batch flag/unflag products by barcode. Returns how many products were matched and updated.
-int labelSystem::flagProducts(const std::vector<std::string> &barcodes, bool setFlag)
+// Batch add products to queue by barcode. Returns number of matched products updated.
+int labelSystem::queueProducts(const std::vector<std::string> &barcodes, int quantity)
 {
 	int matched = 0;
 	if (barcodes.empty()) return matched;
@@ -612,7 +839,7 @@ int labelSystem::flagProducts(const std::vector<std::string> &barcodes, bool set
 	for (const std::string &bc : barcodes) {
 		for (product &pd : dtb.listProduct()) {
 			if (pd.getBarcode() == bc) {
-				pd.setLabelFlag(setFlag);
+				pd.setLabelQuantity(pd.getLabelQuantity() + quantity);
 				++matched;
 				break; // move to next barcode once matched
 			}
@@ -622,24 +849,24 @@ int labelSystem::flagProducts(const std::vector<std::string> &barcodes, bool set
 	return matched;
 }
 
-void labelSystem::flagAll()
+void labelSystem::addAllToQueue(int quantity)
 {
 	for (product& pds : dtb.listProduct())
 	{
-		pds.setLabelFlag(true);
+		pds.setLabelQuantity(pds.getLabelQuantity() + quantity);
 	}
-	std::cout << "All Products Flagged" << std::endl << std::endl;
+	std::cout << "All Products Added to Queue" << std::endl << std::endl;
 }
 
-void labelSystem::unflagAll()
+void labelSystem::clearQueue()
 {
-	clear();
+	if (!QCoreApplication::instance()) clear(); // Only clear console if not in GUI mode
 
 	for (product& pds : dtb.listProduct())
 	{
-		pds.setLabelFlag(false);
+		pds.setLabelQuantity(0);
 	}
-	std::cout << "All Products Unflagged" << std::endl << std::endl;
+	std::cout << "Queue Cleared" << std::endl << std::endl;
 }
 
 void labelSystem::changePrice()
@@ -772,6 +999,15 @@ bool labelSystem::deletePagesWithRetry(int initialDelayMs, int maxAttempts, int 
 	return ok;
 }
 
+void labelSystem::clearAllFlags()
+{
+	for (product& pd : dtb.listProduct())
+	{
+		pd.setLabelQuantity(0);
+	}
+	std::cout << "All product flags cleared." << std::endl << std::endl;
+}
+
 void labelSystem::print()
 {
 
@@ -788,122 +1024,26 @@ void labelSystem::print()
 
 void labelSystem::viewLabels()
 {
+	// Reload config and any dialog overrides before generating labels.
+	init(resourcePath("resources/Config.txt"));
+
 	clear();
 
 	bool labelsFound = false;
+	labelVector = buildLabelPages(labelconfig, labelsFound);
 
-
-	cv::Mat img = cv::imread(resourcePath("resources/labelTemplate.png"), cv::IMREAD_COLOR);
-	cv::Mat labels(3508, 2480, CV_8UC3, cv::Scalar(255, 255, 255));
-	cv::namedWindow("Output", cv::WINDOW_NORMAL);
-
-	int x_offset = labelconfig.XO;
-	int y_offset = 0;
-
-
-	for (product& pd : dtb.listProduct()) {
-
-		if (pd.getLabelFlag()) {
-
-			labelsFound = true;
-
-			cv::Point porg(labelconfig.PX, labelconfig.PY);
-			cv::Point dorg(labelconfig.TX, labelconfig.TY);
-
-			cv::Mat resized;
-			cv::Mat temp;
-			img.copyTo(temp);
-
-			std::string p = std::to_string(pd.getPrice());
-			std::string rp = p.substr(0, p.find(".") + 3);
-
-			cv::addText(temp, "£" + rp, porg, "times", labelconfig.PS, cv::Scalar(0, 0, 255), cv::QT_FONT_NORMAL,
-				cv::QT_STYLE_NORMAL,
-				0);
-
-			if (pd.getDescription().append(" ").size() + pd.getSize().size() > labelconfig.TL)
-			{
-				std::string str = (pd.getDescription().append(" ") + pd.getSize());
-				int pos = str.find_last_of(' ', labelconfig.TL);
-
-				std::string subStr1 = str.substr(0, pos);
-				std::string subStr2 = str.substr(pos + 1, (str.size() - 1));
-
-				cv::Point dorg1(labelconfig.STX, labelconfig.STY);
-
-				cv::addText(temp, subStr1, dorg, "times", labelconfig.TS, cv::Scalar(12, 12, 12), cv::QT_FONT_NORMAL,
-					cv::QT_STYLE_NORMAL, 0);
-				cv::addText(temp, subStr2, dorg1, "times", labelconfig.TS, cv::Scalar(12, 12, 12), cv::QT_FONT_NORMAL,
-					cv::QT_STYLE_NORMAL, 0);
-			}
-			else
-			{
-				cv::addText(temp, pd.getDescription() + " " + pd.getSize(), dorg, "times", labelconfig.TS, cv::Scalar(12, 12, 12), cv::QT_FONT_NORMAL,
-					cv::QT_STYLE_NORMAL, 0);
-			}
-
-			cv::resize(temp, resized, cv::Size(480, 320), cv::INTER_LINEAR);
-
-			if (x_offset + resized.cols > labels.cols) {
-				y_offset += resized.rows;
-				x_offset = labelconfig.XO;
-			}
-			if (y_offset + resized.rows > labels.rows)
-			{
-				labelVector.push_back(labels);
-				labels = cv::Mat(3508, 2480, CV_8UC3, cv::Scalar(255, 255, 255));
-				y_offset = 0;
-			}
-
-			cv::Mat roi(labels, cv::Rect(x_offset, y_offset, resized.cols, resized.rows));
-
-			resized.copyTo(roi);
-
-			x_offset += resized.cols;
-
-			temp.release();
-		}
-	}
-
-	if (labelsFound == false)
-	{
-		std::cout << "Product not found" << std::endl;
-	}
-
-	if (labelVector.size() > 0)
-	{
-		int count = 1;
-		cv::imwrite("labels.jpg", labels);
-		for (auto lbs : labelVector)
-		{
-			cv::imwrite("labels(" + std::to_string(count) + ").jpg", lbs);
-			count++;
-		}
-	}
-	else
-	{
-		cv::imwrite("labels.jpg", labels);
-	}
-
-	if (labelVector.size() > 0 || labelsFound)
-	{
-		print();
-	}
-	else
-	{
+	if (!labelsFound || labelVector.empty()) {
 		std::cout << "There Were No Pages To Print" << std::endl;
+	} else {
+		printImages(labelVector);
 	}
 
-	cv::destroyAllWindows();
-
-	// After showing the print preview, ask the user whether to remove label flags
-	// and whether to delete generated pages. Use console prompts when running
-	// headless; otherwise the GUI caller (e.g. MainWindow) will invoke the
-	// appropriate UI actions after calling viewLabels().
+	// After showing the print preview, ask the user whether to clear the print queue
+	// and whether to delete generated pages.
 	if (QCoreApplication::instance()) {
 		// If running with a GUI, simply return control to the caller. The
 		// MainWindow will handle asking the user via dialog and call
-		// clearLabelFlags() and deletePages() as needed.
+		// clearQueue() and deletePages() as needed.
 		return;
 	} else {
 		bool error = false;
@@ -911,14 +1051,10 @@ void labelSystem::viewLabels()
 		do {
 			error = false;
 			char choice, del;
-			std::cout << "Remove Label Flags (Y or N)" << std::endl;
+			std::cout << "Clear Print Queue? (Y or N)" << std::endl;
 			std::cin >> choice;
 			if (tolower(choice) == 'y') {
-				for (product& pd : dtb.listProduct()) {
-					if (pd.getLabelFlag()) {
-						pd.setLabelFlag(false);
-					}
-				}
+				clearQueue();
 			}
 			else if (tolower(choice) == 'n') {
 
@@ -945,13 +1081,6 @@ void labelSystem::viewLabels()
 		} while (error);
 	}
 
-}
-
-void labelSystem::clearLabelFlags()
-{
-	for (product& pd : dtb.listProduct()) {
-		if (pd.getLabelFlag()) pd.setLabelFlag(false);
-	}
 }
 
 labelConfig labelSystem::getLabelConfig() const {

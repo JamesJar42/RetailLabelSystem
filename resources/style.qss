@@ -64,7 +64,156 @@ QScrollBar::handle:vertical:hover { background: rgba(15,23,32,0.32); }
 QDialog { background: #f7f9fb; }
 QStatusBar { background: transparent; color: #475569; }
 
-/* Misc */
-*:focus { outline: none; }
+/* Phase 1: clear focus visibility for keyboard navigation */
+QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+    border: 2px solid #2563eb;
+}
+
+QTableWidget:focus, QTableView:focus {
+    border: 2px solid #2563eb;
+}
+
+#batchActionBar {
+    background: #eaf1ff;
+    border: 1px solid #cdddfd;
+    border-radius: 8px;
+}
+
+#undoActionBar {
+    background: #f6f8fd;
+    border: 1px solid #d6dfef;
+    border-radius: 8px;
+}
+
+#undoActionLabel {
+    color: #334155;
+}
+
+#undoActionButton {
+    background: #e8efff;
+    border: 1px solid #b7caf6;
+    color: #0f2f7d;
+}
+
+/* Print Dialog Styling (shared editable theme) */
+#pd_Sidebar {
+    background-color: #f5f7fa;
+    border-right: 1px solid #d7dde5;
+}
+#pd_SidebarScroll {
+    background-color: #f5f7fa;
+    border-right: 1px solid #d7dde5;
+}
+#pd_Title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0f1720;
+}
+#pd_Subtitle {
+    color: #5b6677;
+    font-size: 11px;
+}
+#pd_Header {
+    font-weight: 700;
+    color: #3b4757;
+    font-size: 11px;
+}
+#pd_AdvancedToggle {
+    text-align: left;
+    font-weight: 600;
+    min-height: 26px;
+    padding: 4px 10px;
+}
+#pd_Card {
+    background-color: #ffffff;
+    border: 1px solid #e3e8ef;
+    border-radius: 8px;
+}
+#pd_Card QLabel {
+    color: #2f3b4a;
+}
+#pd_Card QComboBox,
+#pd_Card QSpinBox,
+#pd_Card QCheckBox {
+    min-height: 24px;
+}
+#pd_Card QComboBox,
+#pd_Card QSpinBox {
+    background: #ffffff;
+    border: 1px solid #d2dae5;
+    border-radius: 8px;
+    padding: 2px 8px;
+}
+#pd_InfoLabel {
+    color: #4d596a;
+    font-size: 11px;
+}
+#pd_Toolbar {
+    background-color: #ffffff;
+    border: 1px solid #e3e8ef;
+    border-radius: 8px;
+}
+#pd_Toolbar QLabel {
+    color: #2f3b4a;
+    font-size: 11px;
+}
+#pd_ZoomValue {
+    font-weight: 700;
+    color: #1f2933;
+}
+#pd_ZoomBanner {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1f2933;
+}
+#pd_ZoomSlider::groove:horizontal {
+    border: 1px solid #d2dae5;
+    height: 8px;
+    background: #e6ebf3;
+    border-radius: 4px;
+}
+#pd_ZoomSlider::sub-page:horizontal {
+    background: #4f7be6;
+    border-radius: 4px;
+}
+#pd_ZoomSlider::handle:horizontal {
+    background: #ffffff;
+    border: 1px solid #4f7be6;
+    width: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+#pd_PageLabel {
+    font-weight: bold;
+    color: #2f3b4a;
+    font-size: 12px;
+}
+#pd_PrintBtn {
+    background-color: #2563eb;
+    color: white;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+}
+#pd_PrintBtn:hover { background-color: #1d4ed8; }
+
+#pd_CancelBtn {
+    background-color: #ffffff;
+    color: #253040;
+    border: 1px solid #d2dae5;
+    border-radius: 8px;
+}
+#pd_CancelBtn:hover { background-color: #f2f5f9; }
+
+#pd_Sidebar QPushButton, #pd_Toolbar QPushButton {
+    background-color: #ffffff;
+    border: 1px solid #d2dae5;
+    color: #2f3b4a;
+    border-radius: 8px;
+    min-height: 26px;
+    padding: 4px 10px;
+}
+#pd_Sidebar QPushButton:hover, #pd_Toolbar QPushButton:hover {
+    background-color: #f2f5f9;
+}
 
 /* live-reload test */

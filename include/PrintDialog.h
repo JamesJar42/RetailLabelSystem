@@ -42,6 +42,7 @@ public:
     ~PrintDialog();
 
 private slots:
+    void reject() override;
     void handlePaintRequest(QPrinter *printer);
     void onPrinterChanged(int index);
     void onProperties();

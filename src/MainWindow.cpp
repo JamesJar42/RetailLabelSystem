@@ -54,6 +54,7 @@
 #include <QShortcut>
 #include <QKeySequence>
 #include <functional>
+#include "../include/AppUpdater.h"
 #include "../include/ConfigEditorDialog.h"
 #include "../include/ProductDelegate.h"
 #include "../forms/ui_MainWindow.h"
@@ -75,6 +76,77 @@ static CSVMapping getAppCSVMapping() {
 static QString generatePkceCodeVerifier();
 static QString generatePkceCodeChallenge(const QString &verifier);
 
+#ifndef RETAIL_LABELER_VERSION
+#define RETAIL_LABELER_VERSION "1.0.0"
+#endif
+
+static const QString kUpdaterRepoFull = QStringLiteral("JamesJar42/RetailLabelSystem");
+static const QString kUpdaterSourceFixed = QStringLiteral("github:JamesJar42/RetailLabelSystem");
+
+bool MainWindow::ensureCloverTokenForUse(QString &tokenOut, QString &errorOut, bool forceRefresh)
+{
+    QSettings settings;
+    tokenOut = settings.value("clover_token", "").toString().trimmed();
+    const QString refreshToken = settings.value("clover_refresh_token", "").toString().trimmed();
+    const qint64 expiresAt = settings.value("clover_token_expires_at", 0).toLongLong();
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const bool nearExpiry = (expiresAt > 0) && (now >= (expiresAt - 90));
+
+    if (tokenOut.isEmpty()) {
+        errorOut = "Missing Clover access token. Please reconnect Clover.";
+        return false;
+    }
+
+    const bool shouldRefresh = forceRefresh || nearExpiry;
+    if (!shouldRefresh) {
+        errorOut.clear();
+        return true;
+    }
+
+    if (refreshToken.isEmpty()) {
+        errorOut = "Clover token expired and no refresh token is stored. Please reconnect Clover.";
+        return false;
+    }
+
+    const QString clientId = settings.value("clover_client_id", "").toString().trimmed();
+    const QString clientSecret = settings.value("clover_client_secret", "").toString().trimmed();
+    const bool isSandbox = settings.value("clover_sandbox", false).toBool();
+    if (clientId.isEmpty()) {
+        errorOut = "Clover client ID is missing. Please set it in Database Settings.";
+        return false;
+    }
+
+    auto refreshed = ls->dtb.refreshCloverAccessToken(
+        clientId.toStdString(),
+        clientSecret.toStdString(),
+        refreshToken.toStdString(),
+        isSandbox);
+
+    if (refreshed.first.empty()) {
+        const std::string detail = ls->dtb.getLastOAuthError();
+        errorOut = detail.empty()
+            ? "Clover token refresh failed. Please reconnect Clover."
+            : QString::fromStdString(detail);
+        return false;
+    }
+
+    tokenOut = QString::fromStdString(refreshed.first).trimmed();
+    settings.setValue("clover_token", tokenOut);
+
+    const QString nextRefresh = QString::fromStdString(refreshed.second).trimmed();
+    if (!nextRefresh.isEmpty()) {
+        settings.setValue("clover_refresh_token", nextRefresh);
+    }
+
+    const int expiresIn = ls->dtb.getLastOAuthExpiresIn();
+    if (expiresIn > 0) {
+        settings.setValue("clover_token_expires_at", QDateTime::currentSecsSinceEpoch() + expiresIn);
+    }
+
+    errorOut.clear();
+    return true;
+}
+
 MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
     : QMainWindow(parent),
       ui(new Ui::MainWindow()),
@@ -90,6 +162,7 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
     undoActionCountdownTimer(nullptr),
     undoActionSecondsRemaining(0),
     openQueueWorkspaceAction(nullptr),
+    appUpdater(nullptr),
     focusDebugEnabled(false)
 {
     ui->setupUi(this);
@@ -109,6 +182,100 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
     QApplication::setFont(baseFont);
     // Do not set a default stylesheet here; run.cpp loads the initial QSS so MainWindow
     // won't duplicate or override that logic. We still set fonts/palettes programmatically.
+
+    appUpdater = new AppUpdater(this);
+    {
+        QString appVersion = QCoreApplication::applicationVersion().trimmed();
+        if (appVersion.isEmpty()) {
+            appVersion = QStringLiteral(RETAIL_LABELER_VERSION);
+        }
+        appUpdater->setCurrentVersion(appVersion);
+        settings.setValue("updater/manifestUrl", kUpdaterSourceFixed);
+        appUpdater->setUpdateSource(kUpdaterSourceFixed);
+        const QString installerArgsText = settings.value("updater/installerArgs", "").toString().trimmed();
+        appUpdater->setDefaultInstallerArguments(installerArgsText.split(' ', Qt::SkipEmptyParts));
+        appUpdater->setSignaturePolicy(
+            settings.value("updater/requireSignature", true).toBool(),
+            settings.value("updater/expectedPublisher", "").toString());
+
+        connect(appUpdater, &AppUpdater::updateAvailable, this,
+                [this](const QString &latestVersion,
+                       const QString &installerUrl,
+                       const QString &releaseNotes,
+                       const QString &sha256,
+                   const QString &publisher,
+                   const QString &sourceType,
+                       bool userInitiated) {
+            QSettings updaterSettings;
+            const bool autoInstall = updaterSettings.value("updater/autoInstall", false).toBool();
+
+            if (autoInstall && !userInitiated) {
+                if (statusBar()) {
+                    statusBar()->showMessage(QString("Update %1 found. Downloading installer...").arg(latestVersion), 5000);
+                }
+                appUpdater->downloadAndInstall(installerUrl, sha256, publisher, false);
+                return;
+            }
+
+            QString message = QString("Version %1 is available.\n\nInstall this update now?").arg(latestVersion);
+            if (!sourceType.trimmed().isEmpty()) {
+                message += QString("\n\nSource: %1").arg(sourceType.trimmed());
+            }
+            if (!releaseNotes.trimmed().isEmpty()) {
+                message += QString("\n\nRelease notes:\n%1").arg(releaseNotes.trimmed());
+            }
+
+            const QMessageBox::StandardButton choice = QMessageBox::question(
+                this,
+                "Update Available",
+                message,
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::Yes);
+
+            if (choice == QMessageBox::Yes) {
+                if (statusBar()) {
+                    statusBar()->showMessage("Downloading update...", 4000);
+                }
+                appUpdater->downloadAndInstall(installerUrl, sha256, publisher, true);
+            }
+        });
+
+        connect(appUpdater, &AppUpdater::noUpdateAvailable, this,
+                [this](const QString &currentVersion, bool userInitiated) {
+            if (userInitiated) {
+                QMessageBox::information(this,
+                                         "No Update Found",
+                                         QString("Retail Labeler is up to date (%1).")
+                                             .arg(currentVersion.isEmpty() ? QStringLiteral(RETAIL_LABELER_VERSION) : currentVersion));
+            } else if (statusBar()) {
+                statusBar()->showMessage("Automatic update check complete: already up to date.", 2500);
+            }
+        });
+
+        connect(appUpdater, &AppUpdater::checkFailed, this,
+                [this](const QString &message, bool userInitiated) {
+            if (userInitiated) {
+                QMessageBox::warning(this, "Update Check Failed", message);
+            } else {
+                qDebug() << "Automatic update check failed:" << message;
+            }
+        });
+
+        connect(appUpdater, &AppUpdater::installFailed, this,
+                [this](const QString &message, bool) {
+            QMessageBox::warning(this, "Update Install Failed", message);
+        });
+
+        connect(appUpdater, &AppUpdater::installStarted, this,
+                [this](const QString &, bool userInitiated) {
+            if (userInitiated) {
+                QMessageBox::information(this,
+                                         "Installer Started",
+                                         "The installer has started. Retail Labeler will now close so the update can continue.");
+            }
+            qApp->quit();
+        });
+    }
 
     // Configure menus
     QMenuBar *menuBar = this->menuBar();
@@ -517,8 +684,112 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             "F6: Cycle focus regions"
         );
     });
+    helpMenu->addSeparator();
+    helpMenu->addAction("Check for Updates Now", [this]() {
+        if (!appUpdater) return;
+
+        QSettings updaterSettings;
+        const QString installerArgs = updaterSettings.value("updater/installerArgs", "").toString().trimmed();
+        const bool requireSignature = updaterSettings.value("updater/requireSignature", true).toBool();
+        const QString expectedPublisher = updaterSettings.value("updater/expectedPublisher", "").toString().trimmed();
+        updaterSettings.setValue("updater/manifestUrl", kUpdaterSourceFixed);
+
+        if (statusBar()) {
+            statusBar()->showMessage("Checking for updates (GitHub Releases)...", 3000);
+        }
+
+        appUpdater->setUpdateSource(kUpdaterSourceFixed);
+        appUpdater->setDefaultInstallerArguments(installerArgs.split(' ', Qt::SkipEmptyParts));
+        appUpdater->setSignaturePolicy(requireSignature, expectedPublisher);
+        appUpdater->checkForUpdates(true);
+    });
 
     QMenu *optionsMenu = menuBar->addMenu("Options");
+    QAction *updaterSettingsAction = optionsMenu->addAction("Updater Settings...", [this]() {
+        QSettings s;
+
+        QDialog dlg(this);
+        dlg.setWindowTitle("Updater Settings");
+        dlg.resize(560, 360);
+
+        QVBoxLayout *layout = new QVBoxLayout(&dlg);
+        QLabel *intro = new QLabel(
+            "Configure where updates are checked and how installer trust is validated.",
+            &dlg);
+        intro->setWordWrap(true);
+        layout->addWidget(intro);
+
+        QFormLayout *form = new QFormLayout;
+        s.setValue("updater/manifestUrl", kUpdaterSourceFixed);
+        QLabel *sourceValue = new QLabel(QString("github:%1").arg(kUpdaterRepoFull), &dlg);
+        sourceValue->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        QLineEdit *argsEdit = new QLineEdit(s.value("updater/installerArgs", "").toString(), &dlg);
+        argsEdit->setPlaceholderText("Optional installer args, e.g. /S");
+        QCheckBox *requireSigCheck = new QCheckBox("Require signed installer", &dlg);
+        requireSigCheck->setChecked(s.value("updater/requireSignature", true).toBool());
+        QLineEdit *publisherEdit = new QLineEdit(s.value("updater/expectedPublisher", "").toString(), &dlg);
+        publisherEdit->setPlaceholderText("Optional signer match, e.g. CN=Retail Label Co");
+        QCheckBox *autoCheck = new QCheckBox("Check for updates on startup", &dlg);
+        autoCheck->setChecked(s.value("updater/autoCheck", true).toBool());
+        QCheckBox *autoInstall = new QCheckBox("Auto-install update when found", &dlg);
+        autoInstall->setChecked(s.value("updater/autoInstall", false).toBool());
+
+        QLabel *hint = new QLabel(
+            QString("Updater source is locked to github:%1.").arg(kUpdaterRepoFull),
+            &dlg);
+        hint->setWordWrap(true);
+
+        form->addRow("Source", sourceValue);
+        form->addRow("Installer args", argsEdit);
+        form->addRow("Signer match", publisherEdit);
+        form->addRow("", requireSigCheck);
+        form->addRow("", autoCheck);
+        form->addRow("", autoInstall);
+        form->addRow("", hint);
+        layout->addLayout(form);
+
+        QLabel *status = new QLabel("", &dlg);
+        status->setWordWrap(true);
+        layout->addWidget(status);
+
+        QDialogButtonBox *box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+        QPushButton *checkNowBtn = box->addButton("Check Now", QDialogButtonBox::ActionRole);
+        layout->addWidget(box);
+
+        connect(checkNowBtn, &QPushButton::clicked, &dlg, [this, argsEdit, requireSigCheck, publisherEdit, status]() {
+            if (!appUpdater) return;
+
+            appUpdater->setUpdateSource(kUpdaterSourceFixed);
+            appUpdater->setDefaultInstallerArguments(argsEdit->text().trimmed().split(' ', Qt::SkipEmptyParts));
+            appUpdater->setSignaturePolicy(requireSigCheck->isChecked(), publisherEdit->text().trimmed());
+            status->setText("Checking for updates (GitHub Releases)...");
+            status->setStyleSheet("color: #1565c0;");
+            appUpdater->checkForUpdates(true);
+        });
+
+        connect(box, &QDialogButtonBox::accepted, &dlg, [&]() {
+            s.setValue("updater/manifestUrl", kUpdaterSourceFixed);
+            s.setValue("updater/installerArgs", argsEdit->text().trimmed());
+            s.setValue("updater/requireSignature", requireSigCheck->isChecked());
+            s.setValue("updater/expectedPublisher", publisherEdit->text().trimmed());
+            s.setValue("updater/autoCheck", autoCheck->isChecked());
+            s.setValue("updater/autoInstall", autoInstall->isChecked());
+
+            if (appUpdater) {
+                appUpdater->setUpdateSource(kUpdaterSourceFixed);
+                appUpdater->setDefaultInstallerArguments(argsEdit->text().trimmed().split(' ', Qt::SkipEmptyParts));
+                appUpdater->setSignaturePolicy(requireSigCheck->isChecked(), publisherEdit->text().trimmed());
+            }
+
+            dlg.accept();
+        });
+        connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+        dlg.exec();
+    });
+    updaterSettingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_U));
+    updaterSettingsAction->setShortcutContext(Qt::ApplicationShortcut);
+
     QAction *settingsWorkspaceAction = optionsMenu->addAction("Settings Workspace...", [this]() {
         QSettings settings;
         if (!ls) return;
@@ -683,6 +954,27 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
         
         QLabel *cloverHint = new QLabel("Manual entry supported. Use 'Connect' for OAuth flow.", integrationTab);
         cloverHint->setWordWrap(true);
+
+        QLabel *updaterSection = new QLabel("Updater", integrationTab);
+        updaterSection->setStyleSheet("font-weight: 600;");
+        settings.setValue("updater/manifestUrl", kUpdaterSourceFixed);
+        QLabel *updaterSourceValue = new QLabel(QString("github:%1").arg(kUpdaterRepoFull), integrationTab);
+        updaterSourceValue->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        QLineEdit *updaterArgsEdit = new QLineEdit(settings.value("updater/installerArgs", "").toString(), integrationTab);
+        updaterArgsEdit->setPlaceholderText("Optional installer args, e.g. /S");
+        QCheckBox *updaterRequireSignature = new QCheckBox("Require signed installer", integrationTab);
+        updaterRequireSignature->setChecked(settings.value("updater/requireSignature", true).toBool());
+        QLineEdit *updaterPublisherEdit = new QLineEdit(settings.value("updater/expectedPublisher", "").toString(), integrationTab);
+        updaterPublisherEdit->setPlaceholderText("Optional signer match, e.g. CN=Retail Label Co");
+        QCheckBox *updaterAutoCheck = new QCheckBox("Check for updates on startup", integrationTab);
+        updaterAutoCheck->setChecked(settings.value("updater/autoCheck", true).toBool());
+        QCheckBox *updaterAutoInstall = new QCheckBox("Auto-install update when found", integrationTab);
+        updaterAutoInstall->setChecked(settings.value("updater/autoInstall", false).toBool());
+        QPushButton *updaterCheckNowBtn = new QPushButton("Check for Updates Now", integrationTab);
+        QLabel *updaterHint = new QLabel(
+            QString("Updater source is locked to github:%1.").arg(kUpdaterRepoFull),
+            integrationTab);
+        updaterHint->setWordWrap(true);
         
         integrationForm->addRow("Merchant ID", merchantEdit);
         integrationForm->addRow("API Token", tokenEdit);
@@ -693,6 +985,29 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
         integrationForm->addRow("", testConnectionBtn);
         integrationForm->addRow("", statusLabel);
         integrationForm->addRow("", cloverHint);
+        integrationForm->addRow("", updaterSection);
+        integrationForm->addRow("Source", updaterSourceValue);
+        integrationForm->addRow("Installer args", updaterArgsEdit);
+        integrationForm->addRow("Signer match", updaterPublisherEdit);
+        integrationForm->addRow("", updaterRequireSignature);
+        integrationForm->addRow("", updaterAutoCheck);
+        integrationForm->addRow("", updaterAutoInstall);
+        integrationForm->addRow("", updaterCheckNowBtn);
+        integrationForm->addRow("", updaterHint);
+
+        connect(updaterCheckNowBtn, &QPushButton::clicked, &dlg,
+                [this, updaterArgsEdit, updaterRequireSignature, updaterPublisherEdit, statusLabel]() {
+            if (!appUpdater) return;
+
+            const QString args = updaterArgsEdit->text().trimmed();
+            appUpdater->setUpdateSource(kUpdaterSourceFixed);
+            appUpdater->setDefaultInstallerArguments(args.split(' ', Qt::SkipEmptyParts));
+            appUpdater->setSignaturePolicy(updaterRequireSignature->isChecked(), updaterPublisherEdit->text().trimmed());
+
+            statusLabel->setText("Checking for updates (GitHub Releases)...");
+            statusLabel->setStyleSheet("color: #1565c0;");
+            appUpdater->checkForUpdates(true);
+        });
 
         connect(testConnectionBtn, &QPushButton::clicked, &dlg, [this, merchantEdit, tokenEdit, sandboxCheck, statusLabel]() {
              const QString merchant = merchantEdit->text().trimmed();
@@ -1012,6 +1327,19 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                                              if (merchantEdit->text().trimmed().isEmpty() && !callbackMerchantId.isEmpty()) {
                                                  merchantEdit->setText(callbackMerchantId);
                                              }
+
+                                             QSettings s;
+                                             s.setValue("clover_token", tokenEdit->text().trimmed());
+                                             s.setValue("clover_merchant_id", merchantEdit->text().trimmed());
+                                             const std::string refresh = ls->dtb.getLastOAuthRefreshToken();
+                                             if (!refresh.empty()) {
+                                                 s.setValue("clover_refresh_token", QString::fromStdString(refresh));
+                                             }
+                                             const int expiresIn = ls->dtb.getLastOAuthExpiresIn();
+                                             if (expiresIn > 0) {
+                                                 s.setValue("clover_token_expires_at", QDateTime::currentSecsSinceEpoch() + expiresIn);
+                                             }
+
                                              statusLabel->setText("Authentication connection successful!");
                                              statusLabel->setStyleSheet("color: #15803d; font-weight: bold;");
                                              logOAuth("Token exchange succeeded and token field updated.");
@@ -1084,6 +1412,7 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             csvHint->setStyleSheet(QString());
             assetHint->setStyleSheet(QString());
             cloverHint->setStyleSheet(QString());
+            updaterHint->setStyleSheet(QString());
 
             if (mode == 1) {
                 const QString csvPath = dbPathEdit->text().trimmed();
@@ -1149,6 +1478,16 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                 if (firstInvalidTab < 0) {
                     firstInvalidTab = 1;
                     firstInvalidWidget = logoEdit;
+                }
+            }
+
+            const QString updaterUrl = kUpdaterSourceFixed;
+            const bool updaterEnabled = updaterAutoCheck->isChecked() || updaterAutoInstall->isChecked() || !updaterUrl.isEmpty();
+            if (updaterEnabled) {
+                if (updaterUrl.compare(kUpdaterSourceFixed, Qt::CaseInsensitive) != 0) {
+                    integrationsOk = false;
+                    issues << QString("Updater is locked to github:%1.").arg(kUpdaterRepoFull);
+                    updaterHint->setStyleSheet("color: #b91c1c;");
                 }
             }
 
@@ -1365,6 +1704,20 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             settings.setValue("clover_client_id", clientIdEdit->text().trimmed());
             settings.setValue("clover_client_secret", clientSecretEdit->text().trimmed());
             settings.setValue("clover_sandbox", sandboxCheck->isChecked());
+            settings.setValue("updater/manifestUrl", kUpdaterSourceFixed);
+            settings.setValue("updater/installerArgs", updaterArgsEdit->text().trimmed());
+            settings.setValue("updater/requireSignature", updaterRequireSignature->isChecked());
+            settings.setValue("updater/expectedPublisher", updaterPublisherEdit->text().trimmed());
+            settings.setValue("updater/autoCheck", updaterAutoCheck->isChecked());
+            settings.setValue("updater/autoInstall", updaterAutoInstall->isChecked());
+            const std::string refresh = ls->dtb.getLastOAuthRefreshToken();
+            if (!refresh.empty()) {
+                settings.setValue("clover_refresh_token", QString::fromStdString(refresh));
+            }
+            const int expiresIn = ls->dtb.getLastOAuthExpiresIn();
+            if (expiresIn > 0) {
+                settings.setValue("clover_token_expires_at", QDateTime::currentSecsSinceEpoch() + expiresIn);
+            }
 
             ls->setLabelConfig(workingCfg);
             if (!ls->saveConfig("resources/Config.txt")) {
@@ -1378,6 +1731,11 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             setTheme(newTheme);
             updateThemeMenuChecks();
             updateFocusDebugLogging();
+            if (appUpdater) {
+                appUpdater->setUpdateSource(kUpdaterSourceFixed);
+                appUpdater->setDefaultInstallerArguments(updaterArgsEdit->text().trimmed().split(' ', Qt::SkipEmptyParts));
+                appUpdater->setSignaturePolicy(updaterRequireSignature->isChecked(), updaterPublisherEdit->text().trimmed());
+            }
 
             if (databaseWatcher && !databaseWatcher->files().isEmpty()) {
                 databaseWatcher->removePaths(databaseWatcher->files());
@@ -1392,10 +1750,19 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                     }
                 }
             } else if (newMode == 2) {
+                QString activeToken;
+                QString tokenErr;
+                if (!ensureCloverTokenForUse(activeToken, tokenErr, false)) {
+                    QMessageBox::warning(this, "Clover Auth", tokenErr);
+                    updateAddButtonState();
+                    setLabelSystem(ls);
+                    dlg.accept();
+                    return;
+                }
                 QApplication::setOverrideCursor(Qt::WaitCursor);
                 const bool ok = ls->dtb.loadFromClover(
                     merchantEdit->text().trimmed().toStdString(),
-                    tokenEdit->text().trimmed().toStdString(),
+                    activeToken.toStdString(),
                     sandboxCheck->isChecked());
                 QApplication::restoreOverrideCursor();
                 if (!ok) {
@@ -2045,9 +2412,10 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
     if (dbMode == 1) {
         // Clover Mode
         QString mId = settings.value("clover_merchant_id").toString();
-        QString token = settings.value("clover_token").toString();
+        QString token;
+        QString tokenErr;
         bool isSandbox = settings.value("clover_sandbox", false).toBool();
-        if (!mId.isEmpty() && !token.isEmpty()) {
+        if (!mId.isEmpty() && ensureCloverTokenForUse(token, tokenErr, false)) {
             if (ls->dtb.loadFromClover(mId.toStdString(), token.toStdString(), isSandbox)) {
                  setLabelSystem(ls);
                  externalLoaded = true;
@@ -2081,6 +2449,23 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
     // Ensure UI is populated with current in-memory data and active quick filters.
     setLabelSystem(ls);
     updateFocusDebugLogging();
+
+    const bool autoCheckUpdates = settings.value("updater/autoCheck", true).toBool();
+    settings.setValue("updater/manifestUrl", kUpdaterSourceFixed);
+    const QString updaterSource = kUpdaterSourceFixed;
+    if (appUpdater && autoCheckUpdates && !updaterSource.isEmpty()) {
+        QTimer::singleShot(2200, this, [this, updaterSource]() {
+            if (!appUpdater) return;
+            QSettings updaterSettings;
+            const QString installerArgs = updaterSettings.value("updater/installerArgs", "").toString().trimmed();
+            const bool requireSignature = updaterSettings.value("updater/requireSignature", true).toBool();
+            const QString expectedPublisher = updaterSettings.value("updater/expectedPublisher", "").toString().trimmed();
+            appUpdater->setUpdateSource(updaterSource);
+            appUpdater->setDefaultInstallerArguments(installerArgs.split(' ', Qt::SkipEmptyParts));
+            appUpdater->setSignaturePolicy(requireSignature, expectedPublisher);
+            appUpdater->checkForUpdates(false);
+        });
+    }
 }
 
 void MainWindow::setLabelSystem(labelSystem *system)
@@ -2478,16 +2863,31 @@ void MainWindow::updateAddButtonState() {
         connect(ui->addButton, &QPushButton::clicked, this, [this]() {
              QSettings s;
              QString mId = s.value("clover_merchant_id").toString();
-             QString token = s.value("clover_token").toString();
+             QString token;
+             QString tokenErr;
              bool isSandbox = s.value("clover_sandbox", false).toBool();
              
-             if (mId.isEmpty() || token.isEmpty()) {
-                 QMessageBox::warning(this, "Configuration Error", "Clover Merchant ID or Token is missing.\nPlease go to Options -> Database Settings to configure integration.");
+             if (mId.isEmpty()) {
+                 QMessageBox::warning(this, "Configuration Error", "Clover Merchant ID or Token is missing.\nPlease go to Options -> Settings Workspace -> Integrations to configure integration.");
+                 return;
+             }
+
+             if (!ensureCloverTokenForUse(token, tokenErr, false)) {
+                 QMessageBox::warning(this, "Clover Auth", tokenErr);
                  return;
              }
              
              QApplication::setOverrideCursor(Qt::WaitCursor);
              bool success = ls->dtb.loadFromClover(mId.toStdString(), token.toStdString(), isSandbox);
+
+             // If sync failed with a stale token, try one forced refresh and retry once.
+             if (!success) {
+                 QString refreshErr;
+                 if (ensureCloverTokenForUse(token, refreshErr, true)) {
+                     success = ls->dtb.loadFromClover(mId.toStdString(), token.toStdString(), isSandbox);
+                 }
+             }
+
              QApplication::restoreOverrideCursor();
              
              if (success) {

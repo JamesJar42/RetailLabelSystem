@@ -20,6 +20,8 @@ class shop
     std::vector<product> database;
     std::unordered_map<std::string, size_t> barcodeIndex;
     std::string lastOAuthError;
+    std::string lastOAuthRefreshToken;
+    int lastOAuthExpiresIn = 0;
 
 public:
 
@@ -51,6 +53,14 @@ public:
         const std::string &code,
         bool isSandbox,
         const std::string &codeVerifier = "");
+    // Refresh an OAuth access token. Returns pair {access_token, refresh_token_or_empty}.
+    std::pair<std::string, std::string> refreshCloverAccessToken(
+        const std::string &clientId,
+        const std::string &clientSecret,
+        const std::string &refreshToken,
+        bool isSandbox);
     std::string getLastOAuthError() const;
+    std::string getLastOAuthRefreshToken() const;
+    int getLastOAuthExpiresIn() const;
 
 };

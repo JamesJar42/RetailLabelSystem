@@ -12,6 +12,10 @@
 #include <QDebug>
 #include <QDir>
 
+#ifndef RETAIL_LABELER_VERSION
+#define RETAIL_LABELER_VERSION "1.0.0"
+#endif
+
 /*
 * 
 * This .cpp file uses the labelSystem class and starts a QT application. 
@@ -51,6 +55,7 @@ int main(int argc, char* argv[])
 	// Setup organization/app for QSettings
 	QCoreApplication::setOrganizationName("RetailLabelCo");
 	QCoreApplication::setApplicationName("RetailLabeler");
+	QCoreApplication::setApplicationVersion(QStringLiteral(RETAIL_LABELER_VERSION));
 
 	SetConsoleOutputCP(CP_UTF8);
 

@@ -21,6 +21,16 @@ std::string shop::getLastOAuthError() const
     return lastOAuthError;
 }
 
+std::string shop::getLastOAuthRefreshToken() const
+{
+    return lastOAuthRefreshToken;
+}
+
+int shop::getLastOAuthExpiresIn() const
+{
+    return lastOAuthExpiresIn;
+}
+
 bool shop::validateCloverConnection(const std::string &merchantId, const std::string &apiToken, bool isSandbox)
 {
     lastOAuthError.clear();
@@ -385,6 +395,8 @@ std::pair<std::string, std::string> shop::exchangeCloverAuthCode(
     const std::string &codeVerifier) {
     QNetworkAccessManager manager;
     lastOAuthError.clear();
+    lastOAuthRefreshToken.clear();
+    lastOAuthExpiresIn = 0;
 
     const QStringList tokenHosts = isSandbox
         ? QStringList{ "https://apisandbox.dev.clover.com", "https://sandbox.dev.clover.com" }
@@ -420,6 +432,8 @@ std::pair<std::string, std::string> shop::exchangeCloverAuthCode(
         tokenOut = root.value("access_token").toString();
         merchantOut = root.value("merchant_id").toString();
         if (merchantOut.isEmpty()) merchantOut = root.value("merchantId").toString();
+        lastOAuthRefreshToken = root.value("refresh_token").toString().toStdString();
+        lastOAuthExpiresIn = root.value("expires_in").toInt(0);
         return !tokenOut.isEmpty();
     };
 
@@ -525,5 +539,136 @@ std::pair<std::string, std::string> shop::exchangeCloverAuthCode(
     }
     
     return {token.toStdString(), mId.toStdString()};
+}
+
+std::pair<std::string, std::string> shop::refreshCloverAccessToken(
+    const std::string &clientId,
+    const std::string &clientSecret,
+    const std::string &refreshToken,
+    bool isSandbox) {
+    QNetworkAccessManager manager;
+    lastOAuthError.clear();
+    lastOAuthRefreshToken.clear();
+    lastOAuthExpiresIn = 0;
+
+    if (clientId.empty() || refreshToken.empty()) {
+        lastOAuthError = "Missing client_id or refresh_token for Clover token refresh.";
+        return {};
+    }
+
+    const QStringList tokenHosts = isSandbox
+        ? QStringList{ "https://apisandbox.dev.clover.com", "https://sandbox.dev.clover.com" }
+        : QStringList{ "https://api.clover.com", "https://www.clover.com" };
+
+    auto attemptTokenRefresh = [&](const QString &host,
+                                   const QByteArray &body,
+                                   const QByteArray &contentType,
+                                   QString &tokenOut,
+                                   QString &refreshOut,
+                                   QByteArray &rawOut,
+                                   int &statusOut,
+                                   QString &errOut) -> bool {
+        QUrl url(host + "/oauth/v2/token");
+        QNetworkRequest request(url);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, contentType);
+
+        QNetworkReply *reply = manager.post(request, body);
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+
+        statusOut = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        rawOut = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            errOut = reply->errorString();
+            reply->deleteLater();
+            return false;
+        }
+        reply->deleteLater();
+
+        const QJsonObject root = QJsonDocument::fromJson(rawOut).object();
+        tokenOut = root.value("access_token").toString();
+        refreshOut = root.value("refresh_token").toString();
+        lastOAuthExpiresIn = root.value("expires_in").toInt(0);
+        return !tokenOut.isEmpty();
+    };
+
+    const QString qClientId = QString::fromStdString(clientId);
+    const QString qClientSecret = QString::fromStdString(clientSecret);
+    const QString qRefreshToken = QString::fromStdString(refreshToken);
+
+    QJsonObject lowTrustJson;
+    lowTrustJson.insert("grant_type", "refresh_token");
+    lowTrustJson.insert("client_id", qClientId);
+    lowTrustJson.insert("refresh_token", qRefreshToken);
+    const QByteArray lowTrustJsonBody = QJsonDocument(lowTrustJson).toJson(QJsonDocument::Compact);
+
+    QUrlQuery lowTrustForm;
+    lowTrustForm.addQueryItem("grant_type", "refresh_token");
+    lowTrustForm.addQueryItem("client_id", qClientId);
+    lowTrustForm.addQueryItem("refresh_token", qRefreshToken);
+    const QByteArray lowTrustFormBody = lowTrustForm.toString(QUrl::FullyEncoded).toUtf8();
+
+    QJsonObject highTrustJson = lowTrustJson;
+    if (!qClientSecret.isEmpty()) highTrustJson.insert("client_secret", qClientSecret);
+    const QByteArray highTrustJsonBody = QJsonDocument(highTrustJson).toJson(QJsonDocument::Compact);
+
+    QUrlQuery highTrustForm = lowTrustForm;
+    if (!qClientSecret.isEmpty()) highTrustForm.addQueryItem("client_secret", qClientSecret);
+    const QByteArray highTrustFormBody = highTrustForm.toString(QUrl::FullyEncoded).toUtf8();
+
+    struct Variant {
+        QString name;
+        QByteArray body;
+        QByteArray contentType;
+    };
+
+    QList<Variant> variants;
+    variants.push_back({"refresh-lowtrust-json", lowTrustJsonBody, "application/json"});
+    variants.push_back({"refresh-lowtrust-form", lowTrustFormBody, "application/x-www-form-urlencoded"});
+    if (!qClientSecret.isEmpty()) {
+        variants.push_back({"refresh-hightrust-json", highTrustJsonBody, "application/json"});
+        variants.push_back({"refresh-hightrust-form", highTrustFormBody, "application/x-www-form-urlencoded"});
+    }
+
+    QString token;
+    QString nextRefresh;
+    QByteArray data;
+    int statusCode = 0;
+    QString err;
+    bool success = false;
+
+    for (const QString &host : tokenHosts) {
+        for (const Variant &v : variants) {
+            const bool ok = attemptTokenRefresh(host, v.body, v.contentType, token, nextRefresh, data, statusCode, err);
+            if (ok) {
+                qDebug() << "OAuth Refresh Success with" << host << v.name << "status:" << statusCode;
+                success = true;
+                break;
+            }
+
+            const QString detail = QString("OAuth refresh attempt failed host=%1 variant=%2 status=%3 error=%4 body=%5")
+                .arg(host, v.name)
+                .arg(statusCode)
+                .arg(err)
+                .arg(QString::fromUtf8(data));
+            qDebug() << detail;
+            lastOAuthError = detail.toStdString();
+        }
+        if (success) break;
+    }
+
+    if (!success || token.isEmpty()) {
+        if (lastOAuthError.empty()) {
+            lastOAuthError = "OAuth token refresh failed with no detailed error body.";
+        }
+        return {};
+    }
+
+    if (nextRefresh.isEmpty()) {
+        nextRefresh = qRefreshToken;
+    }
+    lastOAuthRefreshToken = nextRefresh.toStdString();
+    return {token.toStdString(), nextRefresh.toStdString()};
 }
 

@@ -13,6 +13,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(RetailLabeler VERSION 1.0.0 LANGUAGES CXX)
 
+add_compile_definitions(RETAIL_LABELER_VERSION="${PROJECT_VERSION}")
+
 if(NOT CPACK_SHORTCUT_ICON)
     set(CPACK_SHORTCUT_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
 endif()
@@ -192,6 +194,7 @@ add_core_logic_test(labelsystem_files_tests tests/test_labelSystem_files_main.cp
 function(add_mainwindow_gui_test TARGET_NAME TEST_SOURCE)
     add_executable(${TARGET_NAME}
         ${TEST_SOURCE}
+        src/AppUpdater.cpp
         src/MainWindow.cpp
         src/ConfigEditorDialog.cpp
         src/DatabaseSettingsDialog.cpp
@@ -203,6 +206,7 @@ function(add_mainwindow_gui_test TARGET_NAME TEST_SOURCE)
         src/product.cpp
         src/Menu.cpp
         include/MainWindow.h
+        include/AppUpdater.h
         include/ConfigEditorDialog.h
         include/DatabaseSettingsDialog.h
         include/VisualSettingsDialog.h
@@ -315,10 +319,9 @@ include(InstallRequiredSystemLibraries)
 install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION bin COMPONENT application)
 
 set(CPACK_PACKAGE_NAME "RetailLabeler")
-set(CPACK_PACKAGE_VENDOR "YourCompany")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RetailLabeler - Retail Label System")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_PACKAGE_CONTACT "youremail@example.com")
+set(CPACK_PACKAGE_CONTACT "jlyttle26@outlook.com")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_EXECUTABLES "RetailLabeler" "RetailLabeler")
 

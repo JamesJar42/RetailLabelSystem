@@ -17,6 +17,7 @@ class QFrame;
 class QTableWidgetItem;
 class QPushButton;
 class QAction;
+class AppUpdater;
 
 namespace Ui { class MainWindow; }
 
@@ -62,6 +63,7 @@ private:
     QString undoActionMessage;
     std::function<void()> pendingUndoAction;
     QAction *openQueueWorkspaceAction;
+    AppUpdater *appUpdater;
     bool focusDebugEnabled;
     QMetaObject::Connection focusDebugConnection;
 
@@ -73,6 +75,7 @@ private:
     void queueUndoAction(const QString &message, std::function<void()> undoAction);
     void clearUndoAction();
     void updateFocusDebugLogging();
+    bool ensureCloverTokenForUse(QString &tokenOut, QString &errorOut, bool forceRefresh = false);
 
 private slots:
     void toggleTheme();

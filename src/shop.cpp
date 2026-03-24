@@ -2,6 +2,7 @@
 #include <vector>
 #include <algorithm>
 #include <stdexcept>
+#include <cctype>
 #include <unordered_set>
 #include <QDebug>
 #include <fstream>
@@ -15,6 +16,85 @@
 #include <QJsonArray>
 #include <QUrl>
 #include <QUrlQuery>
+
+namespace {
+std::string trimCopy(const std::string &value)
+{
+    const size_t start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) {
+        return "";
+    }
+    const size_t end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+bool equalsIgnoreCase(const std::string &left, const std::string &right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < left.size(); ++i) {
+        const unsigned char l = static_cast<unsigned char>(left[i]);
+        const unsigned char r = static_cast<unsigned char>(right[i]);
+        if (std::tolower(l) != std::tolower(r)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<std::string> parseCsvLine(const std::string &line)
+{
+    std::vector<std::string> fields;
+    std::string current;
+    bool inQuotes = false;
+
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+
+        if (c == '"') {
+            if (inQuotes && i + 1 < line.size() && line[i + 1] == '"') {
+                current.push_back('"');
+                ++i;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (c == ',' && !inQuotes) {
+            fields.push_back(current);
+            current.clear();
+            continue;
+        }
+
+        current.push_back(c);
+    }
+
+    fields.push_back(current);
+    return fields;
+}
+
+std::string escapeCsvField(const std::string &value)
+{
+    const bool needsQuotes = value.find_first_of(",\"\r\n") != std::string::npos;
+    if (!needsQuotes) {
+        return value;
+    }
+
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (const char c : value) {
+        if (c == '"') {
+            escaped.push_back('"');
+        }
+        escaped.push_back(c);
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+}
 
 std::string shop::getLastOAuthError() const
 {
@@ -99,9 +179,17 @@ bool shop::validateCloverConnection(const std::string &merchantId, const std::st
 
 void shop::add(product pd)
 {
-    if (barcodeIndex.find(pd.getBarcode()) == barcodeIndex.end()) {
-        barcodeIndex[pd.getBarcode()] = database.size();
+    const std::string barcode = trimCopy(pd.getBarcode());
+    if (barcode.empty()) {
+        throw std::invalid_argument("Barcode cannot be empty.");
     }
+
+    if (barcodeIndex.find(barcode) != barcodeIndex.end()) {
+        throw std::invalid_argument("Duplicate barcode is not allowed: " + barcode);
+    }
+
+    pd.setBarcode(barcode);
+    barcodeIndex[barcode] = database.size();
     database.push_back(pd);
 }
 
@@ -131,9 +219,7 @@ void shop::removeByBarcode(const std::string &barcode)
         barcodeIndex.clear();
         for (size_t i = 0; i < database.size(); ++i) {
             const std::string& bc = database[i].getBarcode();
-            if (barcodeIndex.find(bc) == barcodeIndex.end()) {
-                barcodeIndex[bc] = i;
-            }
+            barcodeIndex[bc] = i;
         }
     }
 }
@@ -174,11 +260,13 @@ bool shop::loadFromCSV(const std::string &path, const CSVMapping &mapping)
     clear();
     std::string line;
     bool firstLine = true;
+    size_t lineNumber = 0;
     
     // Buffer optimization if possible, but basic implementation first
     int maxIdx = std::max({mapping.barcodeCol, mapping.nameCol, mapping.priceCol, mapping.originalPriceCol, mapping.labelQuantityCol});
     
     while (std::getline(file, line)) {
+        ++lineNumber;
         if (line.empty()) continue;
         if (firstLine && mapping.hasHeader) {
             firstLine = false;
@@ -186,61 +274,73 @@ bool shop::loadFromCSV(const std::string &path, const CSVMapping &mapping)
         }
         firstLine = false; 
         
-        // Manual CSV parsing
-        std::vector<std::string> parts;
+        std::vector<std::string> parts = parseCsvLine(line);
         parts.reserve(maxIdx + 1);
-        
-        size_t start = 0;
-        size_t end = line.find(',');
-        
-        while (end != std::string::npos) {
-            parts.emplace_back(line, start, end - start);
-            start = end + 1;
-            end = line.find(',', start);
-        }
-        parts.emplace_back(line, start); // Last part
 
         auto getPart = [&](int idx) -> std::string {
-            if (idx >= 0 && idx < parts.size()) return parts[idx];
+            if (idx >= 0 && idx < static_cast<int>(parts.size())) return parts[idx];
             return "";
         };
 
         try {
-            std::string barcode = getPart(mapping.barcodeCol);
+            std::string barcode = trimCopy(getPart(mapping.barcodeCol));
             if (barcode.empty()) continue;
 
             // Heuristic: If the barcode is literally "Barcode", skip this line (it's a header)
             // regardless of the mapping.hasHeader setting.
-            if (barcode == "Barcode" || barcode == "barcode") continue;
+            if (equalsIgnoreCase(barcode, "barcode")) continue;
 
-            std::string name = getPart(mapping.nameCol);
+            if (barcodeIndex.find(barcode) != barcodeIndex.end()) {
+                qWarning() << "CSV duplicate barcode at line" << static_cast<qint64>(lineNumber)
+                           << ":" << QString::fromStdString(barcode) << "- row skipped.";
+                continue;
+            }
+
+            std::string name = trimCopy(getPart(mapping.nameCol));
             
             float price = 0.0f;
-            const std::string& pStr = getPart(mapping.priceCol);
+            const std::string pStr = trimCopy(getPart(mapping.priceCol));
             if (!pStr.empty()) {
-                try { price = std::stof(pStr); } catch(...) {}
+                try {
+                    price = std::stof(pStr);
+                } catch (const std::exception &e) {
+                    qWarning() << "CSV price parse failed at line" << static_cast<qint64>(lineNumber)
+                               << ":" << e.what();
+                }
             }
 
             // Size logic removed
             
             float originalPrice = 0.0f;
-            const std::string& opStr = getPart(mapping.originalPriceCol);
+            const std::string opStr = trimCopy(getPart(mapping.originalPriceCol));
             if (!opStr.empty()) {
-                try { originalPrice = std::stof(opStr); } catch(...) {}
+                try {
+                    originalPrice = std::stof(opStr);
+                } catch (const std::exception &e) {
+                    qWarning() << "CSV original price parse failed at line" << static_cast<qint64>(lineNumber)
+                               << ":" << e.what();
+                }
             }
 
             int labelQuantity = 0;
-            const std::string& lqStr = getPart(mapping.labelQuantityCol);
+            const std::string lqStr = trimCopy(getPart(mapping.labelQuantityCol));
             if (!lqStr.empty()) {
                 try {
                     labelQuantity = std::stoi(lqStr);
-                } catch (...) {
-                    if(lqStr == "true" || lqStr == "True") labelQuantity = 1;
+                } catch (const std::exception &) {
+                    if (equalsIgnoreCase(lqStr, "true")) {
+                        labelQuantity = 1;
+                    } else {
+                        qWarning() << "CSV quantity parse failed at line" << static_cast<qint64>(lineNumber)
+                                   << "with value" << QString::fromStdString(lqStr) << "- defaulting to 0.";
+                    }
                 }
             }
 
             add(product(name, price, barcode, labelQuantity, originalPrice));
-        } catch (...) {
+        } catch (const std::exception &e) {
+            qWarning() << "CSV row skipped at line" << static_cast<qint64>(lineNumber)
+                       << "due to" << e.what();
             continue;
         }
     }
@@ -257,8 +357,8 @@ bool shop::saveToCSV(const std::string &path)
     file << "Barcode,Name,Price,OriginalPrice,LabelFlag\n";
 
     for (const auto &p : database) {
-        file << p.getBarcode() << ","
-             << p.getName() << ","
+           file << escapeCsvField(p.getBarcode()) << ","
+               << escapeCsvField(p.getName()) << ","
              << p.getPrice() << ","
              << p.getOriginalPrice() << ","
              << p.getLabelQuantity() << "\n";
@@ -374,9 +474,11 @@ bool shop::loadFromClover(const std::string &merchantId, const std::string &apiT
         barcodeIndex.reserve(database.size());
         for (size_t i = 0; i < database.size(); ++i) {
              const std::string& bc = database[i].getBarcode();
-             if (barcodeIndex.find(bc) == barcodeIndex.end()) {
-                 barcodeIndex[bc] = i;
+             if (barcodeIndex.find(bc) != barcodeIndex.end()) {
+                 qWarning() << "Clover returned duplicate barcode, skipping index overwrite for" << QString::fromStdString(bc);
+                 continue;
              }
+             barcodeIndex[bc] = i;
         }
         return true;
     }

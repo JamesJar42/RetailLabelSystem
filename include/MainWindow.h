@@ -2,7 +2,6 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QMainWindow>
 #include "labelSystem.h"
 #include <QFileSystemWatcher>
 #include <QTimer>

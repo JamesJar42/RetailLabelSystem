@@ -1,11 +1,11 @@
-#include "../include\/Menu.h"
+#include "../include/Menu.h"
 
 
 int Menu::getUserData()
 {
     int value;
 
-    cin >> value;
+    std::cin >> value;
 
     return value;
 }
@@ -13,24 +13,24 @@ int Menu::getUserData()
 void Menu::display()
 {
 
-    cout << title << endl;
-    for (int i = 0; i < title.length(); i++)
+    std::cout << title << std::endl;
+    for (size_t i = 0; i < title.length(); i++)
     {
-        cout << "+";
+        std::cout << "+";
     }
 
-    cout << endl;
+    std::cout << std::endl;
 
 
-    for (int opt = 1; opt <= items.size(); opt++)
+    for (size_t opt = 1; opt <= items.size(); opt++)
     {
-        cout << opt << ". " << items[opt - 1] << endl;
+        std::cout << opt << ". " << items[opt - 1] << std::endl;
     }
-    cout << endl;
+    std::cout << std::endl;
 
 }
 
-Menu::Menu(string title, vector<string> data)
+Menu::Menu(std::string title, std::vector<std::string> data)
     :title(title), items(data) {}
 
 Menu::~Menu()

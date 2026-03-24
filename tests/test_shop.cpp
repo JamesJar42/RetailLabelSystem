@@ -135,11 +135,41 @@ void run_shop_tests() {
         shop s;
         s.clear();
         s.add(product("First", 1.0f, "dup", 1));
-        s.add(product("Second", 2.0f, "dup", 2));
-        // Index keeps the first occurrence for duplicate barcodes.
+        bool thrown = false;
+        try {
+            s.add(product("Second", 2.0f, "dup", 2));
+        } catch (const std::invalid_argument &) {
+            thrown = true;
+        }
+        assert(thrown);
         assert(s.searchByBarcode("dup").getDescription() == "First");
         s.removeByBarcode("dup");
         assert(s.listProduct().empty());
+    }
+
+    {
+        const std::string csvPath = tempPath("quoted_fields.csv");
+        std::ofstream out(csvPath);
+        out << "Barcode,Name,Price,OriginalPrice,LabelFlag\n";
+        out << "777,\"Tea, Earl Grey\",3.10,3.10,1\n";
+        out << "778,\"Escaped \"\"Quote\"\" Name\",2.50,2.50,0\n";
+        out.close();
+
+        shop loaded;
+        CSVMapping map;
+        map.hasHeader = true;
+        map.barcodeCol = 0;
+        map.nameCol = 1;
+        map.priceCol = 2;
+        map.originalPriceCol = 3;
+        map.labelQuantityCol = 4;
+
+        assert(loaded.loadFromCSV(csvPath, map));
+        assert(loaded.listProduct().size() == 2);
+        assert(loaded.searchByBarcode("777").getDescription() == "Tea, Earl Grey");
+        assert(loaded.searchByBarcode("778").getDescription() == "Escaped \"Quote\" Name");
+
+        std::filesystem::remove(csvPath);
     }
 
     {

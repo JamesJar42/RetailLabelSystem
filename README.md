@@ -97,7 +97,7 @@ Optional for packaging:
 ### Configure and build (PowerShell example)
 
 ```powershell
-cmake -S . -B build -DOpenCV_DIR="D:/opencv/build/install" -DQt6_ROOT="D:/Qt/6.7.3/msvc2022_64"
+cmake -S . -B build -DOpenCV_DIR="<path-to-opencv-install>" -DQt6_ROOT="<path-to-qt-root>"
 cmake --build build --config Debug
 ```
 
@@ -265,7 +265,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ### Basic package build
 
 ```powershell
-cmake -S . -B build -DOpenCV_DIR="D:/opencv/build/install" -DQt6_ROOT="D:/Qt/6.7.3/msvc2022_64"
+cmake -S . -B build -DOpenCV_DIR="<path-to-opencv-install>" -DQt6_ROOT="<path-to-qt-root>"
 cmake --build build --config Release
 cd build
 cpack
@@ -278,7 +278,7 @@ The project is configured for CPack/IFW by default on Windows.
 Provide an icon path at configure time:
 
 ```powershell
-cmake -S . -B build -DOpenCV_DIR="D:/opencv/build/install" -DQt6_ROOT="D:/Qt/6.7.3/msvc2022_64" -DCPACK_SHORTCUT_ICON="C:/path/to/myicon.ico"
+cmake -S . -B build -DOpenCV_DIR="<path-to-opencv-install>" -DQt6_ROOT="<path-to-qt-root>" -DCPACK_SHORTCUT_ICON="<path-to-icon.ico>"
 cmake --build build --config Release
 cd build
 cpack

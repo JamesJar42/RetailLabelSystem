@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QFont>
 #include <QPen>
+#include <QDebug>
 
 namespace {
 void appendCrashTrace(const QString &msg) {
@@ -20,6 +21,49 @@ void appendCrashTrace(const QString &msg) {
 		f.write(line.toUtf8());
 		f.close();
 	}
+}
+
+labelConfig defaultLabelConfig()
+{
+	return {24, 44, 140, 15, 80, 90, 350, 15, 140, 40};
+}
+
+bool deletePagesWithRetryImpl(int initialDelayMs, int maxAttempts, int attemptIntervalMs)
+{
+	std::this_thread::sleep_for(std::chrono::milliseconds(initialDelayMs));
+
+	auto tryDeleteFile = [&](const std::string &name) -> bool {
+		for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+			std::error_code ec;
+			const bool removed = std::filesystem::remove(name, ec);
+			if (removed) return true;
+			if (!std::filesystem::exists(name)) return true;
+
+			std::ofstream log("resources/DeletionLog.txt", std::ios::app);
+			if (log.is_open()) {
+				log << "Attempt " << attempt + 1 << " to delete " << name << " failed; will retry.\n";
+			}
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(attemptIntervalMs));
+		}
+		return false;
+	};
+
+	bool ok = true;
+	if (!tryDeleteFile("labels.jpg")) ok = false;
+
+	for (int i = 1; ; ++i) {
+		const std::string name = "labels(" + std::to_string(i) + ").jpg";
+		if (!std::filesystem::exists(name)) break;
+		if (!tryDeleteFile(name)) ok = false;
+	}
+
+	std::ofstream log("resources/DeletionLog.txt", std::ios::app);
+	if (log.is_open()) {
+		log << "deletePagesWithRetry completed: " << (ok ? "SUCCESS" : "FAILED") << "\n";
+	}
+
+	return ok;
 }
 }
 
@@ -33,12 +77,13 @@ void appendCrashTrace(const QString &msg) {
 
 labelSystem::labelSystem(const std::string &config)
 {
+	labelconfig = defaultLabelConfig();
 	init(config);
 }
 
 labelSystem::labelSystem()
 {
-    // Initialize any necessary members here
+	labelconfig = defaultLabelConfig();
 }
 
 labelSystem::~labelSystem()
@@ -253,7 +298,11 @@ std::vector<QImage> labelSystem::buildPrintImages(const labelConfig &cfg) {
 
 void labelSystem::UpperCaseWords(std::string &strings)
 {
-	vector<std::string> editString;
+	if (strings.empty()) {
+		return;
+	}
+
+	std::vector<std::string> editString;
 
 	std::string newString;
 
@@ -266,15 +315,16 @@ void labelSystem::UpperCaseWords(std::string &strings)
 
 	for (int i = 0; i < editString.size(); i++)
 	{
-
-		if (!std::isdigit(editString[i].at(0))) 
+		if (!editString[i].empty() && !std::isdigit(static_cast<unsigned char>(editString[i].at(0)))) 
 		{
-			editString[i].at(0) = std::toupper(editString[i].at(0));
+			editString[i].at(0) = static_cast<char>(std::toupper(static_cast<unsigned char>(editString[i].at(0))));
 		}
 		newString += editString[i] + " ";
 	}
 
-	newString.pop_back();
+	if (!newString.empty()) {
+		newString.pop_back();
+	}
 
 	strings = newString;
 
@@ -329,9 +379,9 @@ void labelSystem::printImages(const std::vector<cv::Mat>& cvImages) {
 		}
 		appendCrashTrace("printImages: native dialog done");
 
-		std::thread([this]() {
+		std::thread([]() {
 			appendCrashTrace("printImages: deletePagesWithRetry begin");
-			this->deletePagesWithRetry(2000, 12, 500);
+			deletePagesWithRetryImpl(2000, 12, 500);
 			appendCrashTrace("printImages: deletePagesWithRetry end");
 		}).detach();
 		appendCrashTrace("printImages: native path return");
@@ -386,8 +436,8 @@ void labelSystem::printImages(const std::vector<cv::Mat>& cvImages) {
 	appendCrashTrace("printImages: custom dialog done");
 
 	// Start deletion asynchronously after dialog returns so GUI responsiveness is preserved.
-	std::thread([this]() {
-		this->deletePagesWithRetry(2000, 12, 500);
+	std::thread([]() {
+		deletePagesWithRetryImpl(2000, 12, 500);
 	}).detach();
 }
 
@@ -731,7 +781,7 @@ void labelSystem::editByBarcode()
 	std::cin >> pBarcode;
 	std::cout << std::endl;
 
-	vector<string> items = { "Edit Name", "Edit Price", "Edit Barcode", "Return" };
+	std::vector<std::string> items = { "Edit Name", "Edit Price", "Edit Barcode", "Return" };
 
 	Menu edit("Edit", items);
 
@@ -952,51 +1002,7 @@ void labelSystem::deletePages()
 
 bool labelSystem::deletePagesWithRetry(int initialDelayMs, int maxAttempts, int attemptIntervalMs)
 {
-	// Wait a short initial period to allow any print preview or print job to release file handles
-	std::this_thread::sleep_for(std::chrono::milliseconds(initialDelayMs));
-
-	auto tryDeleteFile = [&](const std::string &name) -> bool {
-		for (int attempt = 0; attempt < maxAttempts; ++attempt) {
-			std::error_code ec;
-			bool removed = std::filesystem::remove(name, ec);
-			if (removed) return true;
-			// If file doesn't exist, treat as success
-			if (!std::filesystem::exists(name)) return true;
-			// Log attempt
-			try {
-				std::ofstream log("resources/DeletionLog.txt", std::ios::app);
-				if (log.is_open()) {
-					log << "Attempt " << attempt + 1 << " to delete " << name << " failed; will retry.\n";
-					log.close();
-				}
-			} catch (...) {}
-
-			std::this_thread::sleep_for(std::chrono::milliseconds(attemptIntervalMs));
-		}
-		return false;
-	};
-
-	bool ok = true;
-	if (!tryDeleteFile("labels.jpg")) ok = false;
-
-	// Also attempt to remove any numbered pages that exist on disk (labels(1).jpg, labels(2).jpg, ...)
-	// This ensures temporary files created externally (tests, editors) are removed even if labelVector is empty.
-	for (int i = 1; ; ++i) {
-		std::string name = "labels(" + std::to_string(i) + ").jpg";
-		if (!std::filesystem::exists(name)) break;
-		if (!tryDeleteFile(name)) ok = false;
-	}
-
-	// Final log for success/failure
-	try {
-		std::ofstream log("resources/DeletionLog.txt", std::ios::app);
-		if (log.is_open()) {
-			log << "deletePagesWithRetry completed: " << (ok ? "SUCCESS" : "FAILED") << "\n";
-			log.close();
-		}
-	} catch (...) {}
-
-	return ok;
+	return deletePagesWithRetryImpl(initialDelayMs, maxAttempts, attemptIntervalMs);
 }
 
 void labelSystem::clearAllFlags()
@@ -1102,7 +1108,8 @@ bool labelSystem::saveConfig(const std::string &path)
 			 << labelconfig.STX << " " << labelconfig.STY << " " << labelconfig.XO << std::endl;
 		fout.close();
 		return true;
-	} catch (...) {
+	} catch (const std::exception &e) {
+		qWarning() << "Failed to save config:" << e.what();
 		return false;
 	}
 }

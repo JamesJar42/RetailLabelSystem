@@ -15,22 +15,22 @@ project(RetailLabeler VERSION 1.0.0 LANGUAGES CXX)
 
 add_compile_definitions(RETAIL_LABELER_VERSION="${PROJECT_VERSION}")
 
-if(NOT CPACK_SHORTCUT_ICON)
-    set(CPACK_SHORTCUT_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
-endif()
+# if(NOT CPACK_SHORTCUT_ICON)
+#     set(CPACK_SHORTCUT_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
+# endif()
 
 # If the builder supplied an icon, install it into the package bin/ directory
-if(CPACK_SHORTCUT_ICON)
-    if(EXISTS "${CPACK_SHORTCUT_ICON}")
-        message(STATUS "Using custom shortcut icon: ${CPACK_SHORTCUT_ICON}")
-        # Install the icon into the package bin folder and normalize the filename
-        get_filename_component(_shortcut_icon_name "${CPACK_SHORTCUT_ICON}" NAME)
-        # Install with a predictable name to avoid path issues
-        install(FILES "${CPACK_SHORTCUT_ICON}" DESTINATION bin RENAME "RetailLabeler.ico" COMPONENT application)
-    else()
-        message(WARNING "CPACK_SHORTCUT_ICON set but file not found: ${CPACK_SHORTCUT_ICON}")
-    endif()
-endif()
+# if(CPACK_SHORTCUT_ICON)
+#     if(EXISTS "${CPACK_SHORTCUT_ICON}")
+#         message(STATUS "Using custom shortcut icon: ${CPACK_SHORTCUT_ICON}")
+#         # Install the icon into the package bin folder and normalize the filename
+#         get_filename_component(_shortcut_icon_name "${CPACK_SHORTCUT_ICON}" NAME)
+#         # Install with a predictable name to avoid path issues
+#         install(FILES "${CPACK_SHORTCUT_ICON}" DESTINATION bin RENAME "RetailLabeler.ico" COMPONENT application)
+#     else()
+#         message(WARNING "CPACK_SHORTCUT_ICON set but file not found: ${CPACK_SHORTCUT_ICON}")
+#     endif()
+# endif()
 
 # Install resources directory for install/package
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources" DESTINATION bin COMPONENT application)
@@ -38,6 +38,26 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources" DESTINATION bin COMPONENT appl
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Use optional environment variables when cache variables were not supplied.
+if(NOT Qt6_ROOT)
+    if(DEFINED ENV{Qt6_ROOT} AND EXISTS "$ENV{Qt6_ROOT}")
+        set(Qt6_ROOT "$ENV{Qt6_ROOT}" CACHE PATH "Path to Qt6 installation root" FORCE)
+    endif()
+endif()
+
+if(NOT OpenCV_DIR)
+    if(DEFINED ENV{OpenCV_DIR} AND EXISTS "$ENV{OpenCV_DIR}")
+        set(OpenCV_DIR "$ENV{OpenCV_DIR}" CACHE PATH "Path to OpenCV install directory" FORCE)
+    endif()
+endif()
+
+if(Qt6_ROOT)
+    list(PREPEND CMAKE_PREFIX_PATH "${Qt6_ROOT}")
+endif()
+if(OpenCV_DIR)
+    list(PREPEND CMAKE_PREFIX_PATH "${OpenCV_DIR}")
+endif()
 
 
 # Set these to your actual install locations if needed
@@ -49,10 +69,6 @@ else()
     set(OpenCV_BIN_DIR_RELEASE "" CACHE PATH "Optional OpenCV release bin directory (used by installer step)")
     set(OpenCV_BIN_DIR_DEBUG "" CACHE PATH "Optional OpenCV debug bin directory (used by installer step)")
 endif()
-
-# Optionally set OpenCV debug/release bin directories
-set(OpenCV_BIN_DIR_RELEASE "${OpenCV_DIR}/x64/vc17/bin")
-set(OpenCV_BIN_DIR_DEBUG "${OpenCV_DIR}/x64/vc17/bin")
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets PrintSupport Network Test)
 
@@ -126,8 +142,9 @@ qt_add_executable(RetailLabeler
     # Configure the resource script from template so the .rc references a
     # valid absolute path to the icon. This avoids CMake variables ending up in
     # the .rc which the resource compiler cannot resolve.
-    configure_file("${CMAKE_SOURCE_DIR}/resources/RetailLabeler.rc.in" "${CMAKE_BINARY_DIR}/RetailLabeler.rc" @ONLY)
-    target_sources(RetailLabeler PRIVATE "${CMAKE_BINARY_DIR}/RetailLabeler.rc")
+    
+    # configure_file("${CMAKE_SOURCE_DIR}/resources/RetailLabeler.rc.in" "${CMAKE_BINARY_DIR}/RetailLabeler.rc" @ONLY)
+    # target_sources(RetailLabeler PRIVATE "${CMAKE_BINARY_DIR}/RetailLabeler.rc")
 
 # Build the Release executable as a GUI app (no console) so running the Release exe
 # doesn't open a terminal window on Windows. Debug builds keep the console for
@@ -343,8 +360,11 @@ else()
     list(APPEND CPACK_SOURCE_IGNORE_FILES "/build/" "\\.git/" "\\.vs/" "~$" "\\.DS_Store$")
 endif()
 
-# Qt Installer Framework location
-set(QTIFW_ROOT "D:/Qt/Tools/QtInstallerFramework/4.10" CACHE PATH "Path to Qt Installer Framework")
+# Qt Installer Framework location (optional)
+set(QTIFW_ROOT "" CACHE PATH "Path to Qt Installer Framework (optional)")
+if(NOT QTIFW_ROOT AND DEFINED ENV{QTIFW_ROOT} AND EXISTS "$ENV{QTIFW_ROOT}")
+    set(QTIFW_ROOT "$ENV{QTIFW_ROOT}" CACHE PATH "Path to Qt Installer Framework (optional)" FORCE)
+endif()
 if(EXISTS "${QTIFW_ROOT}")
     set(CPACK_IFW_ROOT "${QTIFW_ROOT}")
 endif()
@@ -358,8 +378,9 @@ if(WIN32)
     set(CPACK_IFW_PACKAGE_TITLE "Retail Labeler System")
     set(CPACK_IFW_PACKAGE_PUBLISHER "JamesJar42")
     set(CPACK_IFW_PRODUCT_VERSION "${PROJECT_VERSION}")
-    set(CPACK_IFW_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
-    set(CPACK_IFW_PACKAGE_WINDOW_ICON "${CMAKE_SOURCE_DIR}/resources/logo.ico")
+    # Explicitly clear installer icon settings so no custom logo is shown.
+    set(CPACK_IFW_PACKAGE_ICON "")
+    set(CPACK_IFW_PACKAGE_WINDOW_ICON "")
     set(CPACK_IFW_PACKAGE_START_MENU_DIRECTORY "RetailLabeler")
     set(CPACK_IFW_PACKAGE_CONTROL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/controlscript.qs")
         

@@ -24,7 +24,7 @@ class labelSystem
 {
 	std::vector<cv::Mat> labelVector;
 
-	labelConfig labelconfig;
+	labelConfig labelconfig{24, 44, 140, 15, 80, 90, 350, 15, 140, 40};
 	std::vector<cv::Mat> loadImages(const std::vector<std::string>& filenames);
 	QImage cvMatToQImage(const cv::Mat& mat);
 	std::vector<cv::Mat> buildLabelPages(const labelConfig &cfg, bool &labelsFound);

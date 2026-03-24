@@ -4,16 +4,14 @@
 
 #pragma once
 
-using namespace std;
-
 class Menu
 {
-	vector<string> items;
-	string title;
+	std::vector<std::string> items;
+	std::string title;
 
 
 public:
-	Menu(string title, vector<string> data);
+	Menu(std::string title, std::vector<std::string> data);
 
 	~Menu();
 

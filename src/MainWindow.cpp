@@ -436,7 +436,9 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                 try {
                     product &p = ls->dtb.searchByBarcode(bc.toStdString());
                     p.setLabelQuantity(p.getLabelQuantity() + 1);
-                } catch (...) {}
+                } catch (const std::exception &e) {
+                    qWarning() << "Queue +1 failed for barcode" << bc << ":" << e.what();
+                }
             }
             refreshQueueWorkspace();
             rebuildProductTable();
@@ -449,7 +451,9 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                 try {
                     product &p = ls->dtb.searchByBarcode(bc.toStdString());
                     p.setLabelQuantity(std::max(0, p.getLabelQuantity() - 1));
-                } catch (...) {}
+                } catch (const std::exception &e) {
+                    qWarning() << "Queue -1 failed for barcode" << bc << ":" << e.what();
+                }
             }
             refreshQueueWorkspace();
             rebuildProductTable();
@@ -2098,7 +2102,9 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             try {
                 product &p = ls->dtb.searchByBarcode(bc.toStdString());
                 p.setLabelQuantity(p.getLabelQuantity() + 1);
-            } catch (...) {}
+            } catch (const std::exception &e) {
+                qWarning() << "Batch queue +1 failed for barcode" << bc << ":" << e.what();
+            }
         }
         rebuildProductTable();
         statusBar()->showMessage("Batch action applied: queue increased.", 2500);
@@ -2115,7 +2121,9 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             try {
                 product &p = ls->dtb.searchByBarcode(bc.toStdString());
                 p.setLabelQuantity(std::max(0, p.getLabelQuantity() - 1));
-            } catch (...) {}
+            } catch (const std::exception &e) {
+                qWarning() << "Batch queue -1 failed for barcode" << bc << ":" << e.what();
+            }
         }
         rebuildProductTable();
         statusBar()->showMessage("Batch action applied: queue reduced.", 2500);
@@ -2137,7 +2145,9 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             try {
                 product &p = ls->dtb.searchByBarcode(bc.toStdString());
                 p.setLabelQuantity(0);
-            } catch (...) {}
+            } catch (const std::exception &e) {
+                qWarning() << "Batch clear failed for barcode" << bc << ":" << e.what();
+            }
         }
         rebuildProductTable();
         statusBar()->showMessage("Batch action applied: queue cleared for selected rows.", 2500);
@@ -2913,6 +2923,14 @@ void MainWindow::updateAddButtonState() {
             QString barcode = QInputDialog::getText(this, "Add Product", "Barcode:", QLineEdit::Normal, "", &ok);
             if (!ok || barcode.isEmpty()) return;
 
+            try {
+                (void)ls->dtb.searchByBarcode(barcode.toStdString());
+                QMessageBox::warning(this, "Invalid Barcode", "Duplicate barcodes are not allowed.");
+                return;
+            } catch (const std::runtime_error &) {
+                // Expected path: barcode not found.
+            }
+
             int qty = 1; // Default to flagged
             QSettings s;
             if (!s.value("simple_queue_mode", false).toBool()) {
@@ -2921,7 +2939,12 @@ void MainWindow::updateAddButtonState() {
             }
 
             product newProduct(description.toStdString(), price, barcode.toStdString(), qty);
-            ls->dtb.add(newProduct);
+            try {
+                ls->dtb.add(newProduct);
+            } catch (const std::exception &e) {
+                QMessageBox::warning(this, "Add Product", QString("Could not add product: %1").arg(e.what()));
+                return;
+            }
             setLabelSystem(ls);
         });
     }

@@ -27,6 +27,7 @@ public:
 
     std::vector<product> &listProduct();
 
+    // Adds a product to the store. Throws std::invalid_argument for empty/duplicate barcodes.
     void add(product pd);
 
     product& search(int choice);

@@ -165,11 +165,16 @@ DatabaseSettingsDialog::DatabaseSettingsDialog(const QString &currentPath, const
         QByteArray hash = QCryptographicHash::hash(this->pkceVerifier.toUtf8(), QCryptographicHash::Sha256);
         QString codeChallenge = QString(hash.toBase64()).replace("+", "-").replace("/", "_").replace("=", "");
 
+        this->currentOAuthState = QString::number(QRandomGenerator::global()->generate64(), 16);
+
         // 3. Launch Browser
         // redirect_uri must be http://localhost:3000/
         QString baseUrl = isSandbox ? "https://sandbox.dev.clover.com" : "https://www.clover.com";
-        QString urlStr = QString("%1/oauth/v2/authorize?client_id=%2&response_type=code&code_challenge=%3&code_challenge_method=S256&redirect_uri=http://localhost:3000/")
-                            .arg(baseUrl).arg(appId).arg(codeChallenge);
+        QString urlStr = QString("%1/oauth/v2/authorize?client_id=%2&response_type=code&code_challenge=%3&code_challenge_method=S256&redirect_uri=http://localhost:3000/&state=%4")
+                    .arg(baseUrl)
+                    .arg(appId)
+                    .arg(codeChallenge)
+                    .arg(this->currentOAuthState);
         
         QMessageBox::information(this, "Instructions", 
              "1. PREPARATION (Important for Sandbox/Test Merchants):\n"
@@ -281,6 +286,32 @@ void DatabaseSettingsDialog::onOAuthConnection() {
             }
         }
 
+        // Parse state=...
+        QString state;
+        int sIdx = request.indexOf("state=");
+        if (sIdx != -1) {
+            int end = request.indexOf(" ", sIdx);
+            if (end == -1) end = request.length();
+            int amp = request.indexOf("&", sIdx);
+            if (amp != -1 && amp < end) end = amp;
+            state = request.mid(sIdx + 6, end - (sIdx + 6));
+        }
+
+        if (this->currentOAuthState.isEmpty() || state.isEmpty() || state != this->currentOAuthState) {
+            const QString response = QString("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+                                             "<html><body style='font-family:sans-serif; text-align:center; padding:50px;'>"
+                                             "<h1>Authorization Failed</h1>"
+                                             "<p>State mismatch. Please retry the connection.</p>"
+                                             "</body></html>");
+            socket->write(response.toUtf8());
+            socket->flush();
+            socket->disconnectFromHost();
+            oauthServer->close();
+            this->currentOAuthState.clear();
+            QMessageBox::warning(this, "Auth Error", "OAuth callback rejected (state mismatch). Please retry.");
+            return;
+        }
+
         // Send Response
         QString response = QString("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
                                    "<html><body style='font-family:sans-serif; text-align:center; padding:50px;'>"
@@ -297,6 +328,7 @@ void DatabaseSettingsDialog::onOAuthConnection() {
 
         // Close server
         oauthServer->close();
+        this->currentOAuthState.clear();
 
         if (code.isEmpty()) {
              QMessageBox::warning(this, "Auth Error", "Could not find authorization code in callback.");

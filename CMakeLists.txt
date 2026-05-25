@@ -11,7 +11,7 @@ set(OpenCV_DIR "" CACHE PATH "Path to OpenCV install directory (optional). If em
 
 cmake_minimum_required(VERSION 3.16)
 
-project(RetailLabeler VERSION 1.0.0 LANGUAGES CXX)
+project(RetailLabeler VERSION 1.0.1 LANGUAGES CXX)
 
 add_compile_definitions(RETAIL_LABELER_VERSION="${PROJECT_VERSION}")
 

@@ -43,6 +43,7 @@
 #include <QTabWidget>
 #include <QFormLayout>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
@@ -54,12 +55,96 @@
 #include <QShortcut>
 #include <QKeySequence>
 #include <functional>
+#ifdef Q_OS_WIN
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <wincrypt.h>
+#pragma comment(lib, "Crypt32.lib")
+#endif
 #include "../include/AppUpdater.h"
 #include "../include/ConfigEditorDialog.h"
 #include "../include/ProductDelegate.h"
 #include "../forms/ui_MainWindow.h"
 
 // Icons are embedded in resources/icons.qrc and accessed as :/icons/<name>.svg
+
+namespace {
+const QString kSecurePrefix = QStringLiteral("dpapi:");
+
+QString protectSettingValue(const QString &value)
+{
+    const QString trimmed = value.trimmed();
+    if (trimmed.isEmpty()) {
+        return QString();
+    }
+#ifdef Q_OS_WIN
+    QByteArray input = trimmed.toUtf8();
+    DATA_BLOB in;
+    in.pbData = reinterpret_cast<BYTE *>(input.data());
+    in.cbData = static_cast<DWORD>(input.size());
+    DATA_BLOB out;
+    if (!CryptProtectData(&in, L"RetailLabeler", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+        return trimmed;
+    }
+    QByteArray enc(reinterpret_cast<char *>(out.pbData), static_cast<int>(out.cbData));
+    LocalFree(out.pbData);
+    return kSecurePrefix + enc.toBase64();
+#else
+    return trimmed;
+#endif
+}
+
+QString unprotectSettingValue(const QString &value)
+{
+    if (value.isEmpty()) {
+        return QString();
+    }
+#ifdef Q_OS_WIN
+    if (!value.startsWith(kSecurePrefix)) {
+        return value;
+    }
+    QByteArray encoded = value.mid(kSecurePrefix.size()).toUtf8();
+    QByteArray blob = QByteArray::fromBase64(encoded);
+    if (blob.isEmpty()) {
+        return QString();
+    }
+    DATA_BLOB in;
+    in.pbData = reinterpret_cast<BYTE *>(blob.data());
+    in.cbData = static_cast<DWORD>(blob.size());
+    DATA_BLOB out;
+    if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+        return QString();
+    }
+    QByteArray decrypted(reinterpret_cast<char *>(out.pbData), static_cast<int>(out.cbData));
+    LocalFree(out.pbData);
+    return QString::fromUtf8(decrypted);
+#else
+    return value;
+#endif
+}
+
+QString loadSensitiveSetting(QSettings &settings, const QString &key)
+{
+    return unprotectSettingValue(settings.value(key, "").toString());
+}
+
+void saveSensitiveSetting(QSettings &settings, const QString &key, const QString &value)
+{
+    const QString trimmed = value.trimmed();
+    if (trimmed.isEmpty()) {
+        settings.remove(key);
+        return;
+    }
+    settings.setValue(key, protectSettingValue(trimmed));
+}
+
+const QSet<QString> kSensitiveSettings = {
+    QStringLiteral("clover_token"),
+    QStringLiteral("clover_refresh_token"),
+    QStringLiteral("clover_client_secret")
+};
+}
 
 static CSVMapping getAppCSVMapping() {
     QSettings settings;
@@ -86,8 +171,8 @@ static const QString kUpdaterSourceFixed = QStringLiteral("github:JamesJar42/Ret
 bool MainWindow::ensureCloverTokenForUse(QString &tokenOut, QString &errorOut, bool forceRefresh)
 {
     QSettings settings;
-    tokenOut = settings.value("clover_token", "").toString().trimmed();
-    const QString refreshToken = settings.value("clover_refresh_token", "").toString().trimmed();
+    tokenOut = loadSensitiveSetting(settings, QStringLiteral("clover_token")).trimmed();
+    const QString refreshToken = loadSensitiveSetting(settings, QStringLiteral("clover_refresh_token")).trimmed();
     const qint64 expiresAt = settings.value("clover_token_expires_at", 0).toLongLong();
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const bool nearExpiry = (expiresAt > 0) && (now >= (expiresAt - 90));
@@ -109,7 +194,7 @@ bool MainWindow::ensureCloverTokenForUse(QString &tokenOut, QString &errorOut, b
     }
 
     const QString clientId = settings.value("clover_client_id", "").toString().trimmed();
-    const QString clientSecret = settings.value("clover_client_secret", "").toString().trimmed();
+    const QString clientSecret = loadSensitiveSetting(settings, QStringLiteral("clover_client_secret")).trimmed();
     const bool isSandbox = settings.value("clover_sandbox", false).toBool();
     if (clientId.isEmpty()) {
         errorOut = "Clover client ID is missing. Please set it in Database Settings.";
@@ -131,11 +216,11 @@ bool MainWindow::ensureCloverTokenForUse(QString &tokenOut, QString &errorOut, b
     }
 
     tokenOut = QString::fromStdString(refreshed.first).trimmed();
-    settings.setValue("clover_token", tokenOut);
+    saveSensitiveSetting(settings, QStringLiteral("clover_token"), tokenOut);
 
     const QString nextRefresh = QString::fromStdString(refreshed.second).trimmed();
     if (!nextRefresh.isEmpty()) {
-        settings.setValue("clover_refresh_token", nextRefresh);
+        saveSensitiveSetting(settings, QStringLiteral("clover_refresh_token"), nextRefresh);
     }
 
     const int expiresIn = ls->dtb.getLastOAuthExpiresIn();
@@ -208,13 +293,22 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                        bool userInitiated) {
             QSettings updaterSettings;
             const bool autoInstall = updaterSettings.value("updater/autoInstall", false).toBool();
+            const bool requireSignature = updaterSettings.value("updater/requireSignature", true).toBool();
+            const bool hasChecksum = !sha256.trimmed().isEmpty();
+            const bool autoInstallAllowed = requireSignature && hasChecksum;
 
             if (autoInstall && !userInitiated) {
+                if (!autoInstallAllowed) {
+                    if (statusBar()) {
+                        statusBar()->showMessage("Update found but auto-install blocked (missing checksum or signature enforcement).", 6000);
+                    }
+                } else {
                 if (statusBar()) {
                     statusBar()->showMessage(QString("Update %1 found. Downloading installer...").arg(latestVersion), 5000);
                 }
                 appUpdater->downloadAndInstall(installerUrl, sha256, publisher, false);
                 return;
+                }
             }
 
             QString message = QString("Version %1 is available.\n\nInstall this update now?").arg(latestVersion);
@@ -941,11 +1035,11 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
         QWidget *integrationTab = new QWidget(&dlg);
         QFormLayout *integrationForm = new QFormLayout(integrationTab);
         QLineEdit *merchantEdit = new QLineEdit(settings.value("clover_merchant_id", "").toString(), integrationTab);
-        QLineEdit *tokenEdit = new QLineEdit(settings.value("clover_token", "").toString(), integrationTab);
+        QLineEdit *tokenEdit = new QLineEdit(loadSensitiveSetting(settings, QStringLiteral("clover_token")), integrationTab);
         tokenEdit->setEchoMode(QLineEdit::Password);
         
         QLineEdit *clientIdEdit = new QLineEdit(settings.value("clover_client_id", "").toString(), integrationTab);
-        QLineEdit *clientSecretEdit = new QLineEdit(settings.value("clover_client_secret", "").toString(), integrationTab);
+        QLineEdit *clientSecretEdit = new QLineEdit(loadSensitiveSetting(settings, QStringLiteral("clover_client_secret")), integrationTab);
         clientSecretEdit->setEchoMode(QLineEdit::Password);
         
         QCheckBox *sandboxCheck = new QCheckBox("Use Clover sandbox", integrationTab);
@@ -1066,8 +1160,16 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                  }
              }
 
-             auto logOAuth = [oauthLogPath](const QString &msg) {
-                 const QString line = QDateTime::currentDateTime().toString(Qt::ISODate) + " " + msg;
+             auto redactOAuth = [](const QString &msg) {
+                 QString sanitized = msg;
+                 QRegularExpression jsonToken(QStringLiteral("\"(access_token|refresh_token|client_secret)\"\\s*:\\s*\"[^\"]+\""));
+                 sanitized.replace(jsonToken, QStringLiteral("\"\\1\":\"<redacted>\""));
+                 QRegularExpression queryToken(QStringLiteral("(access_token|refresh_token|client_secret)=([^&\\s]+)"));
+                 sanitized.replace(queryToken, QStringLiteral("\\1=<redacted>"));
+                 return sanitized;
+             };
+             auto logOAuth = [oauthLogPath, redactOAuth](const QString &msg) {
+                 const QString line = QDateTime::currentDateTime().toString(Qt::ISODate) + " " + redactOAuth(msg);
                  qDebug() << line;
                  if (oauthLogPath.isEmpty()) return;
                  QFile f(oauthLogPath);
@@ -1118,7 +1220,7 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                  query.addQueryItem("redirect_uri", redirectUri);
                  // Keep request aligned with Clover PKCE examples: minimal set.
                  query.addQueryItem("code_challenge", pkceChallenge);
-                 Q_UNUSED(oauthState);
+                 query.addQueryItem("state", oauthState);
                  url.setQuery(query);
                  return url;
              };
@@ -1259,8 +1361,30 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                                      .arg(!code.isEmpty())
                                      .arg(!callbackMerchantId.isEmpty())
                                      .arg(pathAndQuery));
-                               if (!stateFromCallback.isEmpty() && stateFromCallback != oauthState) {
+                               if (stateFromCallback.isEmpty() || stateFromCallback != oauthState) {
                                    logOAuth(QString("OAuth state mismatch. expected=%1 actual=%2").arg(oauthState, stateFromCallback));
+                                   statusLabel->setText("OAuth callback rejected (state mismatch). Please retry.");
+                                   statusLabel->setStyleSheet("color: #b91c1c;");
+                                   const QString failBody =
+                                       "<html><head><title>Failed</title></head>"
+                                       "<body><h1 style='color:red;font-family:sans-serif;'>Authorization Failed</h1>"
+                                       "<p>State mismatch. Please retry the connection.</p></body></html>";
+                                   const QByteArray failData = failBody.toUtf8();
+                                   const QString response = QString("HTTP/1.1 400 Bad Request\r\n"
+                                                                  "Content-Type: text/html; charset=utf-8\r\n"
+                                                                  "Content-Length: %1\r\n"
+                                                                  "Connection: close\r\n\r\n")
+                                                               .arg(failData.size());
+                                   socket->write(response.toUtf8());
+                                   socket->write(failData);
+                                   socket->flush();
+                                   connect(socket, &QTcpSocket::bytesWritten, socket, [socket](qint64) {
+                                       if (socket->bytesToWrite() == 0) {
+                                           socket->disconnectFromHost();
+                                           socket->deleteLater();
+                                       }
+                                   });
+                                   return;
                                }
                             
                             QString body = !code.isEmpty() ? 
@@ -1333,11 +1457,11 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
                                              }
 
                                              QSettings s;
-                                             s.setValue("clover_token", tokenEdit->text().trimmed());
+                                             saveSensitiveSetting(s, QStringLiteral("clover_token"), tokenEdit->text());
                                              s.setValue("clover_merchant_id", merchantEdit->text().trimmed());
                                              const std::string refresh = ls->dtb.getLastOAuthRefreshToken();
                                              if (!refresh.empty()) {
-                                                 s.setValue("clover_refresh_token", QString::fromStdString(refresh));
+                                                 saveSensitiveSetting(s, QStringLiteral("clover_refresh_token"), QString::fromStdString(refresh));
                                              }
                                              const int expiresIn = ls->dtb.getLastOAuthExpiresIn();
                                              if (expiresIn > 0) {
@@ -1582,7 +1706,17 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             QJsonObject rootObj;
             const QStringList keys = s.allKeys();
             for (const QString &k : keys) {
+                if (kSensitiveSettings.contains(k)) {
+                    continue;
+                }
                 rootObj.insert(k, QJsonValue::fromVariant(s.value(k)));
+            }
+            if (!kSensitiveSettings.isEmpty()) {
+                QJsonArray omitted;
+                for (const QString &key : kSensitiveSettings) {
+                    omitted.append(key);
+                }
+                rootObj.insert(QStringLiteral("_sensitive_keys_omitted"), omitted);
             }
 
             QFile out(path);
@@ -1616,6 +1750,12 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
 
             const QJsonObject obj = doc.object();
             for (auto it = obj.begin(); it != obj.end(); ++it) {
+                if (it.key().startsWith('_')) {
+                    continue;
+                }
+                if (kSensitiveSettings.contains(it.key())) {
+                    continue;
+                }
                 s.setValue(it.key(), it.value().toVariant());
             }
 
@@ -1640,9 +1780,9 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             qtTextRenderCheck->setChecked(s.value("print/useQtAddText", true).toBool());
 
             merchantEdit->setText(s.value("clover_merchant_id", "").toString());
-            tokenEdit->setText(s.value("clover_token", "").toString());
+            tokenEdit->setText(loadSensitiveSetting(s, QStringLiteral("clover_token")));
             clientIdEdit->setText(s.value("clover_client_id", "").toString());
-            clientSecretEdit->setText(s.value("clover_client_secret", "").toString());
+            clientSecretEdit->setText(loadSensitiveSetting(s, QStringLiteral("clover_client_secret")));
             sandboxCheck->setChecked(s.value("clover_sandbox", false).toBool());
 
             workingCfg.TL = s.value("printLayout/TL", workingCfg.TL).toInt();
@@ -1704,9 +1844,9 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             settings.setValue("print/useQtAddText", qtTextRenderCheck->isChecked());
 
             settings.setValue("clover_merchant_id", merchantEdit->text().trimmed());
-            settings.setValue("clover_token", tokenEdit->text().trimmed());
+            saveSensitiveSetting(settings, QStringLiteral("clover_token"), tokenEdit->text());
             settings.setValue("clover_client_id", clientIdEdit->text().trimmed());
-            settings.setValue("clover_client_secret", clientSecretEdit->text().trimmed());
+            saveSensitiveSetting(settings, QStringLiteral("clover_client_secret"), clientSecretEdit->text());
             settings.setValue("clover_sandbox", sandboxCheck->isChecked());
             settings.setValue("updater/manifestUrl", kUpdaterSourceFixed);
             settings.setValue("updater/installerArgs", updaterArgsEdit->text().trimmed());
@@ -1716,7 +1856,7 @@ MainWindow::MainWindow(labelSystem *labelSys, QWidget *parent)
             settings.setValue("updater/autoInstall", updaterAutoInstall->isChecked());
             const std::string refresh = ls->dtb.getLastOAuthRefreshToken();
             if (!refresh.empty()) {
-                settings.setValue("clover_refresh_token", QString::fromStdString(refresh));
+                saveSensitiveSetting(settings, QStringLiteral("clover_refresh_token"), QString::fromStdString(refresh));
             }
             const int expiresIn = ls->dtb.getLastOAuthExpiresIn();
             if (expiresIn > 0) {
